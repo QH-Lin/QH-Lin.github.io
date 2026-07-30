@@ -50,6 +50,7 @@ params:
   UseHugoToc: true
   showtoc: true
   tocopen: false
+  comments: true
 
   homeInfoParams:
     Title: "林琦宏 · Lin Qihong"
