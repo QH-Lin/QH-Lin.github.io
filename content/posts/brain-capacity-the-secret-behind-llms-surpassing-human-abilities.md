@@ -28,4 +28,16 @@ This is where today’s LLMs are weakest, which is why they need carefully desig
 
 Intelligence and brain capacity are not the same thing. They can compensate for each other to some extent, but reaching the highest level in certain fields requires both. Consider ICPC contestants, Go masters, and mathematicians: exceptional intelligence is essential, but so is the capacity to hold and manipulate a vast amount of information at once. Brain capacity is not memory. In computing terms, intelligence is like the CPU, brain capacity is like RAM—the workspace available for active thought—and memory is like a hard drive.
 
-The pace of scientific and technological progress has always been constrained by the limits of the human brain. Yet brain capacity is precisely where LLMs hold their greatest advantage. That is why their performance can be so astonishing.
+The limited capacity of the human brain is one of the major bottlenecks in the advancement of mathematics and science. Yet brain capacity is precisely where LLMs hold their greatest advantage. That is why their performance can be so astonishing.
+
+## 4. From Completing Tasks to Defining Them
+
+In the past, LLM training has focused primarily on completing tasks that have already been defined: answering a question, writing a piece of code, proving a theorem, or making a plan toward an explicit goal. Yet the most important breakthroughs often come not from performing an existing task better, but from recognizing the limitations of the way the task itself has been defined. Many scientific advances have begun by reframing the question: moving from “How can we make a horse-drawn carriage faster?” to “Can we build a vehicle that does not need a horse?” or from “How can we describe the motion of objects more precisely?” to “Can space and time themselves change?” Defining a new task means stepping outside the existing framework and reconsidering its goals, assumptions, and constraints from a higher level.
+
+Therefore, achieving AGI will require more than training models to complete increasingly complex tasks. We must also cultivate their ability to continually think at higher levels and develop capacities analogous to the human faculties of politics, philosophy, and aesthetics.
+
+Politics, in this sense, is the ability to understand the positions, demands, and interests of different parties in a complex situation, and to navigate skillfully among conflicting objectives. Philosophy is the ability to step beyond the immediate problem and reconsider the nature, assumptions, and boundaries of things from a higher level. Aesthetics is the ability to distill the underlying, lower-dimensional structure of a complex, multidimensional subject and judge it meaningfully in the context of its time. Take Chinese calligraphy as an example: the upper limit of an artist’s achievement often depends not on how many years they have practiced calligraphy, but on the depth of their understanding of the world and the breadth of their mind.
+
+What these abilities share is a refusal to remain confined to solving a problem that someone else has already defined. They allow an intelligence to change the scale from which it observes the world and to identify new problems that are more worthy of being solved.
+
+Two developments will be crucial: first, a more advanced and unified agent architecture; second, the collection of training data on higher-dimensional ways of thinking for higher-level agents.
