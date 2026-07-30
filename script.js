@@ -11,7 +11,7 @@ function setTheme(theme) {
     "aria-label",
     isDark ? "Switch to light theme" : "Switch to dark theme"
   );
-  themeMeta.setAttribute("content", isDark ? "#151a18" : "#f4f1ea");
+  themeMeta.setAttribute("content", isDark ? "#1d1e20" : "#f5f5f5");
 }
 
 themeToggle.addEventListener("click", () => {
