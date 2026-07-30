@@ -1,0 +1,88 @@
+baseURL: "https://qh-lin.github.io/"
+locale: "en-US"
+defaultContentLanguage: "en"
+title: "Lin Qihong's Log"
+theme:
+  - PaperMod
+
+enableRobotsTXT: true
+buildDrafts: false
+buildFuture: false
+buildExpired: false
+
+pagination:
+  pagerSize: 10
+
+minify:
+  disableXML: true
+  minifyOutput: true
+
+outputs:
+  home:
+    - HTML
+    - RSS
+    - JSON
+
+params:
+  env: production
+  title: "Lin Qihong's Log"
+  description: "Learning notes on artificial intelligence, language models, and the ideas behind them."
+  keywords:
+    - artificial intelligence
+    - large language models
+    - machine learning
+    - learning notes
+  author: "林琦宏 Lin Qihong"
+  images:
+    - "/og.png"
+  DateFormat: "January 2, 2006"
+
+  defaultTheme: auto
+  disableThemeToggle: false
+
+  ShowReadingTime: true
+  ShowWordCount: true
+  ShowShareButtons: true
+  ShowPostNavLinks: true
+  ShowBreadCrumbs: true
+  ShowCodeCopyButtons: true
+  ShowRssButtonInSectionTermList: true
+  UseHugoToc: true
+  showtoc: true
+  tocopen: false
+
+  homeInfoParams:
+    Title: "林琦宏 · Lin Qihong"
+    Content: "Documenting my learning notes on artificial intelligence, language models, and the ideas behind them."
+
+  socialIcons:
+    - name: github
+      url: "https://github.com/QH-Lin"
+    - name: rss
+      url: "https://qh-lin.github.io/index.xml"
+
+menu:
+  main:
+    - identifier: posts
+      name: Posts
+      url: /posts/
+      weight: 10
+    - identifier: tags
+      name: Tags
+      url: /tags/
+      weight: 20
+    - identifier: archives
+      name: Archives
+      url: /archives/
+      weight: 30
+    - identifier: search
+      name: Search
+      url: /search/
+      weight: 40
+
+markup:
+  goldmark:
+    renderer:
+      unsafe: true
+  highlight:
+    noClasses: false
