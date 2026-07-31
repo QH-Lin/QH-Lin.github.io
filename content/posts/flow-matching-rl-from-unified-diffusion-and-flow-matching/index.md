@@ -186,7 +186,7 @@ $$
 $$
 \boxed{
 Y_t:=\dot x_t
-=
+\mathrel{=}
 \partial_tI(t,x_0,x_1)+\dot\gamma(t)z.
 }
 \tag{3.1}
@@ -248,7 +248,7 @@ $$
 
 $$
 \frac{\mathrm d}{\mathrm dt}\varphi(x_t)
-=
+\mathrel{=}
 \nabla\varphi(x_t)\cdot Y_t.
 $$
 
@@ -263,7 +263,7 @@ $$
 $$
 \frac{\mathrm d}{\mathrm dt}
 \mathbb E[\varphi(x_t)]
-=
+\mathrel{=}
 \mathbb E[
 \nabla\varphi(x_t)\cdot Y_t
 ].
@@ -312,7 +312,7 @@ $$
 $$
 \frac{\mathrm d}{\mathrm dt}
 \mathbb E[\varphi(x_t)]
-=
+\mathrel{=}
 -\int_{\mathbb R^d}
 \varphi(x)\nabla\cdot(\rho u)(t,x)\,\mathrm dx.
 \tag{4.3}
@@ -330,7 +330,7 @@ $$
 
 $$
 \mathbb E[\varphi(x_t)]
-=
+\mathrel{=}
 \int_{\mathbb R^d}
 \varphi(x)\rho(t,x)\,\mathrm dx,
 $$
@@ -340,7 +340,7 @@ $$
 $$
 \frac{\mathrm d}{\mathrm dt}
 \mathbb E[\varphi(x_t)]
-=
+\mathrel{=}
 \int_{\mathbb R^d}
 \varphi(x)\partial_t\rho(t,x)\,\mathrm dx.
 \tag{4.4}
@@ -399,7 +399,7 @@ $$
 
 $$
 u_{\mathrm{SI}}(t,x)
-=
+\mathrel{=}
 \mathbb E[Y_t\mid x_t=x].
 $$
 
@@ -477,7 +477,7 @@ $$
 $$
 \frac{\mathrm d}{\mathrm dt}
 \mathbb E[\varphi(X_t)]
-=
+\mathrel{=}
 \int_{\mathbb R^d}
 \varphi(x)\partial_tq(t,x)\,\mathrm dx.
 \tag{5.4}
@@ -561,9 +561,9 @@ $$
 
 $$
 \mathbb E[\dot X_t\mid X_t=x]
-=
+\mathrel{=}
 \mathbb E[u(t,X_t)\mid X_t=x]
-=
+\mathrel{=}
 u(t,x).
 $$
 
@@ -689,7 +689,7 @@ $$
 $$
 \boxed{
 b(t,x)
-=
+\mathrel{=}
 u(t,x)+\kappa(t)s(t,x).
 }
 \tag{6.3}
@@ -700,7 +700,7 @@ $$
 $$
 \boxed{
 \mathrm dZ_t
-=
+\mathrel{=}
 b(t,Z_t)\,\mathrm dt
 +
 \sqrt{2\kappa(t)}\,\mathrm dW_t,
@@ -714,7 +714,7 @@ $$
 
 $$
 \mathrm dZ_t
-=
+\mathrel{=}
 \bigl(u+\kappa s\bigr)(t,Z_t)\,\mathrm dt
 +
 \sqrt{2\kappa(t)}\,\mathrm dW_t.
@@ -801,7 +801,7 @@ $$
 $$
 \frac{\mathrm d}{\mathrm dt}
 \mathbb E[\varphi(Z_t)]
-=
+\mathrel{=}
 \int_{\mathbb R^d}
 \varphi(x)
 \left[
@@ -815,7 +815,7 @@ $$
 $$
 \frac{\mathrm d}{\mathrm dt}
 \mathbb E[\varphi(Z_t)]
-=
+\mathrel{=}
 \int_{\mathbb R^d}
 \varphi(x)\partial_t p(t,x)\,\mathrm dx.
 \tag{6.10}
@@ -826,7 +826,7 @@ $$
 $$
 \boxed{
 \partial_t p
-=
+\mathrel{=}
 -\nabla\cdot(bp)
 +
 \kappa\Delta p.
@@ -839,7 +839,7 @@ $$
 $$
 \boxed{
 \partial_t p
-=
+\mathrel{=}
 -\nabla\cdot\bigl((u+\kappa s)p\bigr)
 +
 \kappa\Delta p.
@@ -857,7 +857,7 @@ $$
 
 $$
 \mathrm dZ_t
-=
+\mathrel{=}
 u(t,Z_t)\,\mathrm dt
 +
 \sqrt{2\kappa(t)}\,\mathrm dW_t,
@@ -867,7 +867,7 @@ $$
 
 $$
 \partial_t p
-=
+\mathrel{=}
 -\nabla\cdot(up)
 +
 \kappa\Delta p.
@@ -944,7 +944,7 @@ SDE 实际密度 $p$ 满足
 $$
 \begin{cases}
 \partial_t p
-=
+\mathrel{=}
 -\nabla\cdot\bigl((u+\kappa s)p\bigr)
 +\kappa\Delta p,\\
 p(0,x)=\rho_0(x).
@@ -957,7 +957,7 @@ $$
 $$
 \begin{cases}
 \partial_t\rho
-=
+\mathrel{=}
 -\nabla\cdot\bigl((u+\kappa s)\rho\bigr)
 +\kappa\Delta\rho,\\
 \rho(0,x)=\rho_0(x).
@@ -995,7 +995,7 @@ $$
 $$
 \boxed{
 J_p
-=
+\mathrel{=}
 bp-\kappa\nabla p.
 }
 \tag{6.19}
@@ -1049,7 +1049,7 @@ $$
 $$
 \boxed{
 \mathrm dZ_t
-=
+\mathrel{=}
 \bigl(u-\kappa s\bigr)(t,Z_t)\,\mathrm dt
 +
 \sqrt{2\kappa(t)}\,\mathrm d\overline W_t,
@@ -1088,7 +1088,7 @@ $$
 $$
 \boxed{
 \mathcal J_{\mathrm{vel}}(\theta)
-=
+\mathrel{=}
 \mathbb E_{t,x_0,x_1,z}
 \left[
 \left\|
@@ -1115,7 +1115,7 @@ $$
 
 $$
 Y_t
-=
+\mathrel{=}
 \partial_tI(t,x_0,x_1)+\dot\gamma(t)z.
 $$
 
@@ -1247,9 +1247,9 @@ $$
 $$
 \boxed{
 u_\theta^*(t,x)
-=
+\mathrel{=}
 \mathbb E[Y_t\mid x_t=x]
-=
+\mathrel{=}
 u(t,x).
 }
 \tag{7.3}
@@ -1264,7 +1264,7 @@ $$
 $$
 \boxed{
 \mathcal L_u[\hat u]
-=
+\mathrel{=}
 \int_0^1
 \mathbb E\left[
 \frac12\|\hat u(t,x_t)\|^2
@@ -1278,7 +1278,7 @@ $$
 
 $$
 \frac12\|\hat u-Y_t\|^2
-=
+\mathrel{=}
 \frac12\|\hat u\|^2
 -Y_t\cdot\hat u
 +
@@ -1351,7 +1351,7 @@ $$
 $$
 \boxed{
 u(t,x)
-=
+\mathrel{=}
 \mathbb E[
 \partial_tI(t,x_0,x_1)
 \mid
@@ -1366,7 +1366,7 @@ $$
 $$
 \boxed{
 \mathcal L_{\mathrm{FM}}(\theta)
-=
+\mathrel{=}
 \mathbb E
 \left\|
 u_\theta(t,I(t,x_0,x_1))
@@ -1385,7 +1385,7 @@ $$
 
 $$
 I(t,x_0,x_1)
-=
+\mathrel{=}
 (1-t)x_0+tx_1.
 $$
 
@@ -1400,7 +1400,7 @@ $$
 $$
 \boxed{
 \mathcal L_{\mathrm{linear\text{-}FM}}
-=
+\mathrel{=}
 \mathbb E
 \left\|
 u_\theta\bigl(t,(1-t)x_0+tx_1\bigr)
@@ -1436,9 +1436,9 @@ $$
 $$
 \boxed{
 s(t,x)
-=
+\mathrel{=}
 \nabla_x\log\rho(t,x)
-=
+\mathrel{=}
 -\frac{1}{\gamma(t)}
 \mathbb E[z\mid x_t=x].
 }
@@ -1449,7 +1449,7 @@ $$
 
 $$
 \eta_z(t,x)
-=
+\mathrel{=}
 \mathbb E[z\mid x_t=x],
 $$
 
@@ -1466,7 +1466,7 @@ $$
 
 $$
 \mathcal L_{\mathrm{noise}}
-=
+\mathrel{=}
 \mathbb E
 \left\|
 \eta_\theta(t,x_t)-z
@@ -1478,7 +1478,7 @@ $$
 
 $$
 v(t,x)
-=
+\mathrel{=}
 \mathbb E[
 \partial_tI(t,x_0,x_1)
 \mid x_t=x
@@ -1489,7 +1489,7 @@ $$
 
 $$
 \mathbb E[z\mid x_t=x]
-=
+\mathrel{=}
 -\gamma(t)s(t,x)
 $$
 
@@ -1498,7 +1498,7 @@ $$
 $$
 \boxed{
 u(t,x)
-=
+\mathrel{=}
 v(t,x)-\dot\gamma(t)\gamma(t)s(t,x).
 }
 \tag{9.4}
@@ -1535,7 +1535,7 @@ $$
 $$
 \boxed{
 y_\tau
-=
+\mathrel{=}
 a(\tau)y_0+\sigma(\tau)\varepsilon.
 }
 \tag{10.1}
@@ -1602,7 +1602,7 @@ $$
 $$
 \boxed{
 \nabla_y\log r_\tau(y)
-=
+\mathrel{=}
 -\frac{
 \mathbb E[\varepsilon\mid y_\tau=y]
 }{
@@ -1625,7 +1625,7 @@ $$
 $$
 \boxed{
 \mathrm dD_\tau
-=
+\mathrel{=}
 f(\tau,D_\tau)\,\mathrm d\tau
 +
 g(\tau)\,\mathrm dW_\tau.
@@ -1637,7 +1637,7 @@ $$
 
 $$
 \partial_\tau r_\tau
-=
+\mathrel{=}
 -\nabla\cdot(fr_\tau)
 +
 \frac12g^2(\tau)\Delta r_\tau.
@@ -1654,7 +1654,7 @@ $$
 
 $$
 \Delta r_\tau
-=
+\mathrel{=}
 \nabla\cdot(r_\tau s_\tau),
 $$
 
@@ -1662,7 +1662,7 @@ $$
 
 $$
 \partial_\tau r_\tau
-=
+\mathrel{=}
 -\nabla\cdot
 \left[
 \left(
@@ -1676,7 +1676,7 @@ $$
 $$
 \boxed{
 \mathrm dD_\tau
-=
+\mathrel{=}
 \left[
 f(\tau,D_\tau)
 -
@@ -1693,7 +1693,7 @@ $$
 $$
 \boxed{
 \mathrm dD_\tau
-=
+\mathrel{=}
 \left[
 f(\tau,D_\tau)
 -
@@ -1713,7 +1713,7 @@ Variance-Preserving SDE 取
 
 $$
 f(\tau,y)
-=
+\mathrel{=}
 -\frac12\beta(\tau)y,
 \qquad
 g(\tau)=\sqrt{\beta(\tau)}.
@@ -1724,7 +1724,7 @@ $$
 $$
 \boxed{
 \mathrm dD_\tau
-=
+\mathrel{=}
 -\frac12\beta(\tau)D_\tau\,\mathrm d\tau
 +
 \sqrt{\beta(\tau)}\,\mathrm dW_\tau.
@@ -1736,7 +1736,7 @@ $$
 
 $$
 \bar\alpha(\tau)
-=
+\mathrel{=}
 \exp\left(
 -\int_0^\tau\beta(r)\,\mathrm dr
 \right),
@@ -1747,7 +1747,7 @@ $$
 $$
 \boxed{
 D_\tau
-=
+\mathrel{=}
 \sqrt{\bar\alpha(\tau)}D_0
 +
 \sqrt{1-\bar\alpha(\tau)}\varepsilon.
@@ -1779,7 +1779,7 @@ DDPM 首先定义离散前向马尔可夫链，而不是直接把任意随机插
 
 $$
 q_{\mathrm{fwd}}(y_k\mid y_{k-1})
-=
+\mathrel{=}
 \mathcal N\left(
 \sqrt{\alpha_k}y_{k-1},
 (1-\alpha_k)\mathrm{Id}
@@ -1800,7 +1800,7 @@ $$
 $$
 \boxed{
 y_k
-=
+\mathrel{=}
 \sqrt{\bar\alpha_k}y_0
 +
 \sqrt{1-\bar\alpha_k}\varepsilon,
@@ -1823,7 +1823,7 @@ $$
 $$
 \boxed{
 \nabla_y\log q_{\mathrm{fwd},k}(y)
-=
+\mathrel{=}
 -\frac{
 \mathbb E[\varepsilon\mid y_k=y]
 }{
@@ -1838,7 +1838,7 @@ $$
 $$
 \boxed{
 \mathcal L_{\mathrm{DDPM}}
-=
+\mathrel{=}
 \mathbb E
 \left\|
 \varepsilon_\theta(y_k,k)-\varepsilon
@@ -1851,7 +1851,7 @@ $$
 
 $$
 \varepsilon_\theta^*(y,k)
-=
+\mathrel{=}
 \mathbb E[\varepsilon\mid y_k=y].
 $$
 
@@ -1860,7 +1860,7 @@ $$
 $$
 \boxed{
 s_\theta(y_k,k)
-=
+\mathrel{=}
 -\frac{
 \varepsilon_\theta(y_k,k)
 }{
@@ -1875,7 +1875,7 @@ $$
 $$
 \boxed{
 \widehat y_0
-=
+\mathrel{=}
 \frac{
 y_k-\sqrt{1-\bar\alpha_k}\varepsilon_\theta(y_k,k)
 }{
@@ -1891,7 +1891,7 @@ $$
 
 $$
 q_{\mathrm{fwd}}(y_{k-1}\mid y_k,y_0)
-=
+\mathrel{=}
 \mathcal N(
 \widetilde\mu_k,
 \widetilde\beta_k\mathrm{Id}
@@ -1903,7 +1903,7 @@ $$
 
 $$
 \widetilde\beta_k
-=
+\mathrel{=}
 \frac{1-\bar\alpha_{k-1}}
 {1-\bar\alpha_k}\beta_k,
 \tag{12.8}
@@ -1911,7 +1911,7 @@ $$
 
 $$
 \widetilde\mu_k(y_k,y_0)
-=
+\mathrel{=}
 \frac{
 \sqrt{\bar\alpha_{k-1}}\beta_k
 }{
@@ -1931,7 +1931,7 @@ $$
 $$
 \boxed{
 \mu_\theta(y_k,k)
-=
+\mathrel{=}
 \frac1{\sqrt{\alpha_k}}
 \left(
 y_k
@@ -1948,7 +1948,7 @@ DDPM 反向采样为
 $$
 \boxed{
 y_{k-1}
-=
+\mathrel{=}
 \mu_\theta(y_k,k)
 +
 \sigma_k\xi_k,
@@ -1980,7 +1980,7 @@ DDIM 继续使用与 DDPM 相同的训练边际
 
 $$
 y_k
-=
+\mathrel{=}
 \sqrt{\bar\alpha_k}y_0
 +
 \sqrt{1-\bar\alpha_k}\varepsilon
@@ -1994,7 +1994,7 @@ $$
 
 $$
 \widehat y_0
-=
+\mathrel{=}
 \frac{
 y_k-\sqrt{1-\bar\alpha_k}\varepsilon_\theta(y_k,k)
 }{
@@ -2007,7 +2007,7 @@ $$
 $$
 \boxed{
 y_{k-1}
-=
+\mathrel{=}
 \sqrt{\bar\alpha_{k-1}}\widehat y_0
 +
 \sqrt{1-\bar\alpha_{k-1}}
@@ -2046,7 +2046,7 @@ $$
 $$
 \boxed{
 \sigma_k
-=
+\mathrel{=}
 \eta_{\mathrm{DDIM}}
 \sqrt{
 \frac{1-\bar\alpha_{k-1}}
