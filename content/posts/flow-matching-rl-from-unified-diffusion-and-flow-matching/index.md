@@ -1370,7 +1370,7 @@ $$
 \mathbb E
 \left\|
 u_\theta(t,I(t,x_0,x_1))
--
+\mathbin{-}
 \partial_tI(t,x_0,x_1)
 \right\|^2.
 }
@@ -1404,7 +1404,7 @@ $$
 \mathbb E
 \left\|
 u_\theta\bigl(t,(1-t)x_0+tx_1\bigr)
--
+\mathbin{-}
 (x_1-x_0)
 \right\|^2.
 }
@@ -1679,7 +1679,7 @@ $$
 \mathrel{=}
 \left[
 f(\tau,D_\tau)
--
+\mathbin{-}
 \frac12g^2(\tau)s_\tau(D_\tau)
 \right]\mathrm d\tau.
 }
@@ -1696,7 +1696,7 @@ $$
 \mathrel{=}
 \left[
 f(\tau,D_\tau)
--
+\mathbin{-}
 g^2(\tau)s_\tau(D_\tau)
 \right]\mathrm d\tau
 +
@@ -1935,7 +1935,7 @@ $$
 \frac1{\sqrt{\alpha_k}}
 \left(
 y_k
--
+\mathbin{-}
 \frac{\beta_k}{\sqrt{1-\bar\alpha_k}}
 \varepsilon_\theta(y_k,k)
 \right).
