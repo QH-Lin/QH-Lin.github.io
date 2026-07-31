@@ -1,0 +1,7 @@
+{{- if eq .Type "block" }}
+\[
+{{ .Inner }}
+\]
+{{- else }}
+\({{ .Inner }}\)
+{{- end }}
