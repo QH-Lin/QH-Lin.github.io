@@ -1,5 +1,5 @@
 ---
-title: "æµå¹éRL: ä»ç»ä¸diffusionä¸flow matchingè°èµ·"
+title: "流匹配RL: 从统一diffusion与flow matching谈起"
 date: 2026-07-31T17:39:06+08:00
 draft: false
 tags:
@@ -8,7 +8,7 @@ tags:
   - reinforcement learning
 categories:
   - AI
-description: "ä»éæºæå¼ä¸æ¦çè·¯å¾åºåï¼ç»ä¸çè§£ DiffusionãFlow MatchingãODE ä¸ SDEã"
+description: "从随机插值与概率路径出发，统一理解 Diffusion、Flow Matching、ODE 与 SDE。"
 showToc: true
 TocOpen: false
 math: true
@@ -350,7 +350,7 @@ $$
 \int_a^b(\varphi F)'(x)\,\mathrm dx
 \mathrel{=}
 \int_a^b\varphi'(x)F(x)\,\mathrm dx
-+
+\mathbin{+}
 \int_a^b\varphi(x)F'(x)\,\mathrm dx.
 $$
 
@@ -431,7 +431,7 @@ $$
 $$
 \boxed{
 \partial_t\rho(t,x)
-+
+\mathbin{+}
 \nabla\cdot\bigl(\rho(t,x)u(t,x)\bigr)
 =0
 }
@@ -453,7 +453,7 @@ $$
 
 $$
 \text{局部密度变化}
-+
+\mathbin{+}
 \text{净流出量}
 =0.
 $$
@@ -637,12 +637,12 @@ $$
 \begin{aligned}
 \text{随机插值：}\quad&
 \partial_t\rho
-+
+\mathbin{+}
 \nabla\cdot(\rho u)=0,
 \\
 \text{ODE：}\quad&
 \partial_tq
-+
+\mathbin{+}
 \nabla\cdot(qu)=0.
 \end{aligned}
 }
@@ -713,7 +713,7 @@ $$
 $$
 \boxed{
 \partial_t\rho(t,x)
-+
+\mathbin{+}
 \nabla\cdot\bigl(\rho(t,x)u(t,x)\bigr)
 \mathrel{=}
 0,
@@ -863,7 +863,7 @@ $$
 \mathrm dZ_t
 \mathrel{=}
 b(t,Z_t)\,\mathrm dt
-+
+\mathbin{+}
 \sigma(t)\,\mathrm dW_t,
 \qquad
 \sigma(t)\ge0.
@@ -890,7 +890,7 @@ $$
 \mathrm dZ_t
 \mathrel{=}
 b(t,Z_t)\,\mathrm dt
-+
+\mathbin{+}
 \sigma(t,Z_t)\,\mathrm dW_t.
 $$
 
@@ -900,9 +900,9 @@ $$
 Z_t
 \mathrel{=}
 Z_0
-+
+\mathbin{+}
 \int_0^t b(r,Z_r)\,\mathrm dr
-+
+\mathbin{+}
 \int_0^t\sigma(r,Z_r)\,\mathrm dW_r.
 $$
 
@@ -924,7 +924,7 @@ $$
 Z_{t_{k+1}}-Z_{t_k}
 \approx
 b(t_k,Z_{t_k})\Delta t
-+
+\mathbin{+}
 \sigma(t_k,Z_{t_k})\sqrt{\Delta t}\,\xi_k,
 \qquad
 \xi_k\sim\mathcal N(0,\mathrm{Id}).
@@ -945,7 +945,7 @@ $$
 Z_{t+\Delta t}-Z_t
 \approx
 b(t,x)\Delta t
-+
+\mathbin{+}
 \sigma(t)\sqrt{\Delta t}\,\xi,
 \qquad
 \xi\sim\mathcal N(0,\mathrm{Id}).
@@ -969,76 +969,7 @@ $$
 
 这说明 $b$ 控制平均位移，而 $\sigma$ 直接控制随机增量的标准差。
 
-### 6.3 目标密度的 score
-
-为了抵消后面布朗噪声造成的扩散，需要知道目标密度 $\rho(t,x)$ 在每个位置朝哪个方向增大。这个方向由 score 给出。
-
-假设 $\rho(t,x)>0$ 且足够光滑，定义
-
-$$
-\boxed{
-s(t,x)
-:=
-\nabla_x\log\rho(t,x).
-}
-\tag{6.5}
-$$
-
-score 是一个 $d$ 维向量。它的物理含义是：
-
-- 方向：指向当前位置附近密度上升最快的方向；
-- 大小：表示附近密度变化得有多快；
-- 在密度的局部峰顶，score 为零。
-
-由链式法则，
-
-$$
-s(t,x)
-\mathrel{=}
-\frac{\nabla_x\rho(t,x)}{\rho(t,x)}.
-$$
-
-因此
-
-$$
-\boxed{
-\rho(t,x)s(t,x)
-\mathrel{=}
-\nabla_x\rho(t,x).
-}
-\tag{6.6}
-$$
-
-这个等式是后面证明漂移与扩散相互抵消的关键。
-
-例如，若
-
-$$
-\rho(x)=\mathcal N(\mu,\alpha^2\mathrm{Id}),
-$$
-
-那么
-
-$$
-s(x)
-\mathrel{=}
--\frac{x-\mu}{\alpha^2}
-\mathrel{=}
-\frac{\mu-x}{\alpha^2}.
-$$
-
-所以 Gaussian 的 score 总是指向分布中心 $\mu$：离中心越远，指向中心的作用越强。
-
-需要注意两点：
-
-1. 这里的 $s(t,x)$ 是目标密度 $\rho(t,x)$ 的 score，不是 SDE 实际密度 $p(t,x)$ 的 score。
-2. score 本身不是速度。后面乘上由噪声幅度决定的系数 $\tfrac12\sigma^2(t)$ 后，
-   $$
-   \frac12\sigma^2(t)s(t,x)
-   $$
-   才成为漂移速度的一部分，用来抵消布朗扩散。
-
-### 6.4 先得到一般 SDE 的 Fokker--Planck 方程
+### 6.3 先得到一般 SDE 的 Fokker--Planck 方程
 
 先给出本节结论。对于式 (6.2)
 
@@ -1046,7 +977,7 @@ $$
 \mathrm dZ_t
 \mathrel{=}
 b(t,Z_t)\,\mathrm dt
-+
+\mathbin{+}
 \sigma(t)\,\mathrm dW_t,
 $$
 
@@ -1057,7 +988,7 @@ $$
 \partial_t p
 \mathrel{=}
 -\nabla\cdot(bp)
-+
+\mathbin{+}
 \frac12\sigma^2(t)\Delta p.
 }
 $$
@@ -1093,10 +1024,10 @@ $$
 &+
 \sigma(t)\nabla\varphi(Z_t)\cdot\mathrm dW_t.
 \end{aligned}
-\tag{6.7}
+\tag{6.5}
 $$
 
-将式 (6.7) 从 $0$ 积分到 $t$，再取期望。满足适当可积性条件时，Itô 随机积分的期望为零，因此
+将式 (6.5) 从 $0$ 积分到 $t$，再取期望。满足适当可积性条件时，Itô 随机积分的期望为零，因此
 
 $$
 \begin{aligned}
@@ -1111,7 +1042,7 @@ $$
 \frac12\sigma^2(t)
 \mathbb E[\Delta\varphi(Z_t)].
 \end{aligned}
-\tag{6.8}
+\tag{6.6}
 $$
 
 因为 $Z_t$ 的密度是 $p(t,x)$，可以把期望写成积分：
@@ -1129,7 +1060,7 @@ $$
 \int_{\mathbb R^d}
 \Delta\varphi(x)p(t,x)\,\mathrm dx.
 \end{aligned}
-\tag{6.9}
+\tag{6.7}
 $$
 
 对第一项分部积分一次，对第二项分部积分两次。因为 $\varphi$ 具有紧支撑，边界项为零：
@@ -1156,10 +1087,10 @@ $$
 \varphi(x)
 \left[
 -\nabla\cdot(bp)
-+
+\mathbin{+}
 \frac12\sigma^2\Delta p
 \right](t,x)\,\mathrm dx.
-\tag{6.10}
+\tag{6.8}
 $$
 
 另一方面，
@@ -1178,25 +1109,25 @@ $$
 \mathrel{=}
 \int_{\mathbb R^d}
 \varphi(x)\partial_t p(t,x)\,\mathrm dx.
-\tag{6.11}
+\tag{6.9}
 $$
 
-比较式 (6.10) 和式 (6.11)。由于测试函数 $\varphi$ 可以任意选择，只能有
+比较式 (6.8) 和式 (6.9)。由于测试函数 $\varphi$ 可以任意选择，只能有
 
 $$
 \boxed{
 \partial_t p
 \mathrel{=}
 -\nabla\cdot(bp)
-+
+\mathbin{+}
 \frac12\sigma^2\Delta p.
 }
-\tag{6.12}
+\tag{6.10}
 $$
 
 这就证明了本节开头给出的 Fokker--Planck 方程。
 
-> **补充：式 (6.7) 的二阶项从哪里来？**
+> **补充：式 (6.5) 的二阶项从哪里来？**
 >
 > Itô 公式可以形式化地看成二阶 Taylor 展开：
 
@@ -1204,7 +1135,7 @@ $$
 \mathrm d\varphi(Z_t)
 \mathrel{=}
 \nabla\varphi(Z_t)\cdot\mathrm dZ_t
-+
+\mathbin{+}
 \frac12
 (\mathrm dZ_t)^{\mathsf T}
 \nabla^2\varphi(Z_t)
@@ -1233,9 +1164,78 @@ $$
 \Delta\varphi(Z_t)\,\mathrm dt.
 $$
 
-> 因此式 (6.7) 比普通链式法则多出一个正的二阶项。
+> 因此式 (6.5) 比普通链式法则多出一个正的二阶项。
 
-### 6.5 用 Fokker--Planck 方程设计漂移
+### 6.4 定义 score，并用它设计漂移
+
+第 6.3 节表明，布朗噪声会在密度方程中产生扩散项。为了设计抵消这个扩散项的漂移，需要知道目标密度 $\rho(t,x)$ 在每个位置朝哪个方向增大。这个方向由 score 给出。
+
+假设 $\rho(t,x)>0$ 且足够光滑，定义
+
+$$
+\boxed{
+s(t,x)
+:=
+\nabla_x\log\rho(t,x).
+}
+\tag{6.11}
+$$
+
+score 是一个 $d$ 维向量。它的物理含义是：
+
+- 方向：指向当前位置附近密度上升最快的方向；
+- 大小：表示附近密度变化得有多快；
+- 在密度的局部峰顶，score 为零。
+
+由链式法则，
+
+$$
+s(t,x)
+\mathrel{=}
+\frac{\nabla_x\rho(t,x)}{\rho(t,x)}.
+$$
+
+因此
+
+$$
+\boxed{
+\rho(t,x)s(t,x)
+\mathrel{=}
+\nabla_x\rho(t,x).
+}
+\tag{6.12}
+$$
+
+这个等式是后面证明漂移与扩散相互抵消的关键。
+
+例如，若
+
+$$
+\rho(x)=\mathcal N(\mu,\alpha^2\mathrm{Id}),
+$$
+
+那么
+
+$$
+s(x)
+\mathrel{=}
+-\frac{x-\mu}{\alpha^2}
+\mathrel{=}
+\frac{\mu-x}{\alpha^2}.
+$$
+
+所以 Gaussian 的 score 总是指向分布中心 $\mu$：离中心越远，指向中心的作用越强。
+
+需要注意两点：
+
+1. 这里的 $s(t,x)$ 是目标密度 $\rho(t,x)$ 的 score，不是 SDE 实际密度 $p(t,x)$ 的 score。
+2. score 本身不是速度。后面乘上由噪声幅度决定的系数 $\tfrac12\sigma^2(t)$ 后，
+   $$
+   \frac12\sigma^2(t)s(t,x)
+   $$
+   才成为漂移速度的一部分，用来抵消布朗扩散。
+
+#### 从目标概率流反推出漂移
 
 现在已经知道噪声会在密度方程中增加
 
@@ -1249,7 +1249,7 @@ $$
 \mathrm dZ_t
 \mathrel{=}
 u(t,Z_t)\,\mathrm dt
-+
+\mathbin{+}
 \sigma(t)\,\mathrm dW_t,
 $$
 
@@ -1259,7 +1259,7 @@ $$
 \partial_t p
 \mathrel{=}
 -\nabla\cdot(up)
-+
+\mathbin{+}
 \frac12\sigma^2\Delta p,
 $$
 
@@ -1284,7 +1284,7 @@ $$
 \partial_t p
 \mathrel{=}
 -\nabla\cdot(bp)
-+
+\mathbin{+}
 \kappa\Delta p.
 $$
 
@@ -1357,7 +1357,7 @@ $$
 
 $$
 \underbrace{\kappa\rho s}_{+\kappa\nabla\rho\text{，score 漂移流量}}
-+
+\mathbin{+}
 \underbrace{(-\kappa\nabla\rho)}_{\text{扩散流量}}
 \mathrel{=}
 0.
@@ -1367,7 +1367,7 @@ $$
 
 严格地说，只要额外概率流的散度为零就不会改变密度，所以漂移不绝对唯一。式 (6.14) 是最直接的逐点抵消选择。
 
-### 6.6 构造 SDE，并证明它的密度等于 $\rho$
+### 6.5 构造 SDE，并证明它的密度等于 $\rho$
 
 将式 (6.14) 和 $\sigma=\sqrt{2\kappa}$ 代回原 SDE，得到
 
@@ -1376,7 +1376,7 @@ $$
 \mathrm dZ_t
 \mathrel{=}
 \bigl(u+\kappa s\bigr)(t,Z_t)\,\mathrm dt
-+
+\mathbin{+}
 \sqrt{2\kappa(t)}\,\mathrm dW_t,
 \qquad
 Z_0\sim\rho_0.
@@ -1395,7 +1395,7 @@ $$
 \partial_t p
 \mathrel{=}
 -\nabla\cdot\bigl((u+\kappa s)p\bigr)
-+
+\mathbin{+}
 \kappa\Delta p,
 \\
 p(0,x)=\rho_0(x).
@@ -1404,7 +1404,7 @@ $$
 
 **第二步：验证目标密度 $\rho$ 也满足同一个方程。**
 
-由式 (6.6)，
+由式 (6.12)，
 
 $$
 \nabla\cdot(\rho s)
@@ -1473,7 +1473,7 @@ $$
 
 因此，式 (6.15) 的单条轨迹虽然带有随机性，但它在每个时刻的理想边际密度仍然是预先设计的 $\rho(t)$。
 
-### 6.7 用概率流理解抵消机制
+### 6.6 用概率流理解抵消机制
 
 Fokker--Planck 方程可以写成概率质量守恒形式
 
@@ -1506,7 +1506,7 @@ J_\rho
 \\
 &=
 u\rho
-+
+\mathbin{+}
 \underbrace{\kappa\rho s}_{\kappa\nabla\rho}
 \mathbin{-}
 \kappa\nabla\rho
@@ -1533,7 +1533,7 @@ $\kappa$ 可以看成轨迹随机性的旋钮：
 - $\kappa(t)>0$ 时，单条轨迹具有随机性，但理想边际仍然是 $\rho(t)$；
 - 不同的非负函数 $\kappa(t)$ 给出不同的随机轨迹族，却可以共享同一条边际密度路径。
 
-### 6.8 前向 SDE、反向 SDE 与 ODE
+### 6.7 前向 SDE、反向 SDE 与 ODE
 
 沿 $t:0\to1$ 运行的前向 SDE 是
 
@@ -1541,7 +1541,7 @@ $$
 \mathrm dZ_t
 \mathrel{=}
 \bigl(u+\kappa s\bigr)(t,Z_t)\,\mathrm dt
-+
+\mathbin{+}
 \sqrt{2\kappa(t)}\,\mathrm dW_t.
 $$
 
@@ -1568,7 +1568,7 @@ $$
 \mathrm dZ_t
 \mathrel{=}
 \bigl(u-\kappa s\bigr)(t,Z_t)\,\mathrm dt
-+
+\mathbin{+}
 \sqrt{2\kappa(t)}\,\mathrm d\overline W_t,
 \qquad
 t:1\longrightarrow0.
@@ -1594,7 +1594,7 @@ $$
 \left[
 -u+\kappa s
 \right](1-\tau,\widetilde Z_\tau)\,\mathrm d\tau
-+
+\mathbin{+}
 \sqrt{2\kappa(1-\tau)}\,\mathrm d\widetilde W_\tau.
 $$
 
@@ -1619,13 +1619,12 @@ $$
 $$
 \boxed{
 \text{布朗扩散}
-+
+\mathbin{+}
 \text{score 漂移补偿}
 \mathrel{=}
 \text{不改变目标边际概率流}.
 }
 $$
-
 ## 7. 平方回归：为什么随机标签可以学习出确定速度场
 
 ### 7.1 条件期望是平方损失的最优预测
@@ -1710,7 +1709,7 @@ $$
 \\
 &=
 \|f(t,x_t)-m_t(x_t)\|^2
-+
+\mathbin{+}
 \|R_t\|^2
 \\
 &\quad
@@ -1828,7 +1827,7 @@ $$
 \mathrel{=}
 \frac12\|\hat u\|^2
 -Y_t\cdot\hat u
-+
+\mathbin{+}
 \frac12\|Y_t\|^2,
 $$
 
@@ -2174,7 +2173,7 @@ $$
 \mathrm dD_\tau
 \mathrel{=}
 f(\tau,D_\tau)\,\mathrm d\tau
-+
+\mathbin{+}
 g(\tau)\,\mathrm dW_\tau.
 }
 \tag{11.1}
@@ -2186,7 +2185,7 @@ $$
 \partial_\tau r_\tau
 \mathrel{=}
 -\nabla\cdot(fr_\tau)
-+
+\mathbin{+}
 \frac12g^2(\tau)\Delta r_\tau.
 \tag{11.2}
 $$
@@ -2246,7 +2245,7 @@ f(\tau,D_\tau)
 \mathbin{-}
 g^2(\tau)s_\tau(D_\tau)
 \right]\mathrm d\tau
-+
+\mathbin{+}
 g(\tau)\,\mathrm d\overline W_\tau,
 \qquad
 \mathrm d\tau<0.
@@ -2273,7 +2272,7 @@ $$
 \mathrm dD_\tau
 \mathrel{=}
 -\frac12\beta(\tau)D_\tau\,\mathrm d\tau
-+
+\mathbin{+}
 \sqrt{\beta(\tau)}\,\mathrm dW_\tau.
 }
 \tag{11.5}
@@ -2296,7 +2295,7 @@ $$
 D_\tau
 \mathrel{=}
 \sqrt{\bar\alpha(\tau)}D_0
-+
+\mathbin{+}
 \sqrt{1-\bar\alpha(\tau)}\varepsilon.
 }
 \tag{11.6}
@@ -2349,7 +2348,7 @@ $$
 y_k
 \mathrel{=}
 \sqrt{\bar\alpha_k}y_0
-+
+\mathbin{+}
 \sqrt{1-\bar\alpha_k}\varepsilon,
 \qquad
 \varepsilon\sim\mathcal N(0,\mathrm{Id}).
@@ -2464,7 +2463,7 @@ $$
 }{
 1-\bar\alpha_k
 }y_0
-+
+\mathbin{+}
 \frac{
 \sqrt{\alpha_k}(1-\bar\alpha_{k-1})
 }{
@@ -2497,7 +2496,7 @@ $$
 y_{k-1}
 \mathrel{=}
 \mu_\theta(y_k,k)
-+
+\mathbin{+}
 \sigma_k\xi_k,
 \qquad
 \xi_k\sim\mathcal N(0,\mathrm{Id}).
@@ -2529,7 +2528,7 @@ $$
 y_k
 \mathrel{=}
 \sqrt{\bar\alpha_k}y_0
-+
+\mathbin{+}
 \sqrt{1-\bar\alpha_k}\varepsilon
 $$
 
@@ -2556,7 +2555,7 @@ $$
 y_{k-1}
 \mathrel{=}
 \sqrt{\bar\alpha_{k-1}}\widehat y_0
-+
+\mathbin{+}
 \sqrt{1-\bar\alpha_{k-1}}
 \varepsilon_\theta(y_k,k).
 }
@@ -2581,7 +2580,7 @@ y_{k-1}
 1-\bar\alpha_{k-1}-\sigma_k^2
 }
 \varepsilon_\theta(y_k,k)
-+
+\mathbin{+}
 \sigma_k\xi_k,
 \end{aligned}
 }
@@ -2677,7 +2676,7 @@ s&=\nabla\log\rho,
 \mathrm dZ_t
 &=
 (u+\kappa s)(t,Z_t)\,\mathrm dt
-+
+\mathbin{+}
 \sqrt{2\kappa(t)}\,\mathrm dW_t,
 \\
 \rho s&=\nabla\rho
