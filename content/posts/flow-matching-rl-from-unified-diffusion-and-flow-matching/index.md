@@ -1,5 +1,5 @@
 ---
-title: "流匹配RL: 从统一diffusion与flow matching谈起"
+title: "流匹配的RL（一）: 从统一diffusion与flow matching谈起"
 date: 2026-07-31T17:39:06+08:00
 draft: false
 tags:
@@ -415,6 +415,39 @@ $$
 \tag{4.4}
 $$
 
+> **备注：式 (4.4) 为什么成立？**
+>
+> 对固定时刻 $t$，$x_t$ 的概率密度是 $\rho(t,x)$，所以 $\varphi(x_t)$ 的期望就是按该密度加权积分：
+
+$$
+\mathbb E[\varphi(x_t)]
+\mathrel{=}
+\int_{\mathbb R^d}\varphi(x)\rho(t,x)\,\mathrm dx.
+$$
+
+> 这里 $x$ 只是积分变量。测试函数 $\varphi(x)$ 不依赖时间，随时间变化的只有密度 $\rho(t,x)$。在 $\rho$ 足够光滑、可以交换时间求导与积分的条件下，
+
+$$
+\begin{aligned}
+\frac{\mathrm d}{\mathrm dt}\mathbb E[\varphi(x_t)]
+&=
+\frac{\mathrm d}{\mathrm dt}
+\int_{\mathbb R^d}\varphi(x)\rho(t,x)\,\mathrm dx
+\\
+&=
+\int_{\mathbb R^d}
+\frac{\partial}{\partial t}
+\bigl[\varphi(x)\rho(t,x)\bigr]\,\mathrm dx
+\\
+&=
+\int_{\mathbb R^d}
+\varphi(x)\partial_t\rho(t,x)\,\mathrm dx.
+\end{aligned}
+$$
+
+> 最后一步使用了 $\partial_t\varphi(x)=0$。若测试函数本身也依赖时间，还会多出 $\int(\partial_t\varphi)\rho\,\mathrm dx$。
+
+
 比较式 (4.3) 和式 (4.4)：
 
 $$
@@ -556,6 +589,8 @@ $$
 \varphi(x)\partial_tq(t,x)\,\mathrm dx.
 \tag{5.4}
 $$
+
+> **备注：** 式 (5.4) 使用的步骤与式 (4.4) 完全相同，详见式 (4.4) 下方的备注。
 
 因此
 
@@ -1010,7 +1045,36 @@ $$
 \text{得到密度方程}.
 $$
 
-取光滑、紧支撑的测试函数 $\varphi\in C_c^\infty(\mathbb R^d)$。Itô 公式给出
+取光滑、紧支撑的测试函数 $\varphi\in C_c^\infty(\mathbb R^d)$。先说明式 (6.5) 中会用到的两个空间微分算子。
+
+梯度是由所有一阶偏导数组成的向量：
+
+$$
+\boxed{
+\nabla\varphi(x)
+\mathrel{=}
+\left(
+\partial_{x_1}\varphi(x),
+\ldots,
+\partial_{x_d}\varphi(x)
+\right).
+}
+$$
+
+Laplace 算子是所有坐标方向上的二阶偏导数之和：
+
+$$
+\boxed{
+\Delta\varphi(x)
+:=
+\sum_{i=1}^d
+\partial_{x_i}^2\varphi(x)
+\mathrel{=}
+\operatorname{tr}\!\left(\nabla^2\varphi(x)\right).
+}
+$$
+
+其中 $\nabla^2\varphi$ 是 Hessian 矩阵，$\operatorname{tr}$ 表示矩阵对角元素之和。现在，Itô 公式给出
 
 $$
 \begin{aligned}
@@ -1026,6 +1090,175 @@ $$
 \end{aligned}
 \tag{6.5}
 $$
+
+> **备注：式 (6.5) 是怎么来的？**
+>
+> 关键是：布朗增量是 $\sqrt{\Delta t}$ 量级，所以它的平方是 $\Delta t$ 量级，不能忽略。因此普通的一阶链式法则必须补上二阶 Taylor 项。
+>
+> 在一个小时间步内，
+
+$$
+\Delta Z_t
+\approx
+b(t,Z_t)\Delta t
+\mathbin{+}
+\sigma(t)\sqrt{\Delta t}\,\xi,
+\qquad
+\xi\sim\mathcal N(0,\mathrm{Id}).
+$$
+
+> 对 $\varphi$ 作二阶 Taylor 展开：
+
+$$
+\varphi(Z_t+\Delta Z_t)-\varphi(Z_t)
+\approx
+\nabla\varphi(Z_t)\cdot\Delta Z_t
+\mathbin{+}
+\frac12
+\Delta Z_t^{\mathsf T}
+\nabla^2\varphi(Z_t)
+\Delta Z_t.
+$$
+
+> **为什么 Taylor 展开是这个形式？** 令 $z=Z_t$、$h=\Delta Z_t$。$d$ 维函数的二阶 Taylor 公式写成坐标形式是
+
+$$
+\varphi(z+h)
+\approx
+\varphi(z)
+\mathbin{+}
+\sum_{i=1}^d
+\frac{\partial\varphi}{\partial x_i}(z)h_i
+\mathbin{+}
+\frac12
+\sum_{i=1}^d\sum_{j=1}^d
+\frac{\partial^2\varphi}{\partial x_i\partial x_j}(z)
+h_i h_j.
+$$
+
+> 第一重求和就是梯度点积
+
+$$
+\sum_i\partial_{x_i}\varphi(z)h_i
+\mathrel{=}
+\nabla\varphi(z)\cdot h.
+$$
+
+> 定义 Hessian 矩阵
+
+$$
+\nabla^2\varphi(z)
+\mathrel{=}
+\left[
+\frac{\partial^2\varphi}{\partial x_i\partial x_j}(z)
+\right]_{i,j=1}^d,
+$$
+
+> 则二重求和正是矩阵二次型
+
+$$
+\sum_{i,j}
+\partial_{x_i x_j}\varphi(z)h_i h_j
+\mathrel{=}
+h^{\mathsf T}\nabla^2\varphi(z)h.
+$$
+
+> 将 $z=Z_t$、$h=\Delta Z_t$ 代回，并把等式两边减去 $\varphi(Z_t)$，就得到上面的展开。系数 $\tfrac12$ 与一维 Taylor 公式中的二阶项系数相同。
+>
+> 一阶项直接给出
+
+$$
+\nabla\varphi(Z_t)\cdot b(t,Z_t)\,\mathrm dt
+\mathbin{+}
+\sigma(t)\nabla\varphi(Z_t)\cdot\mathrm dW_t.
+$$
+
+>
+> 二阶项中有三类乘积：
+>
+> - $(\mathrm dt)^2$ 是 $\mathrm dt^2$ 量级，可以忽略；
+> - $\mathrm dt\,\mathrm dW_t$ 是 $\mathrm dt^{3/2}$ 量级，也可以忽略；
+> - $(\mathrm dW_t)^2$ 是 $\mathrm dt$ 量级，必须保留。
+>
+> Itô 记号把这件事写成
+
+$$
+(\mathrm dt)^2=0,
+\qquad
+\mathrm dt\,\mathrm dW_t=0,
+\qquad
+\mathrm dW_t\mathrm dW_t^{\mathsf T}
+\mathrel{=}
+\mathrm{Id}\,\mathrm dt.
+$$
+
+> 设 Hessian 的第 $(i,j)$ 个元素为
+
+$$
+H_{ij}
+:=
+\frac{\partial^2\varphi}{\partial x_i\partial x_j}(Z_t).
+$$
+
+> 二阶项中保留下来的布朗部分逐坐标展开为
+
+$$
+\frac12\sigma^2(t)
+\sum_{i=1}^d\sum_{j=1}^d
+H_{ij}\,\mathrm dW_t^{(i)}\mathrm dW_t^{(j)}.
+$$
+
+> Itô 规则的逐坐标形式是
+
+$$
+\mathrm dW_t^{(i)}\mathrm dW_t^{(j)}
+\mathrel{=}
+\delta_{ij}\,\mathrm dt,
+$$
+
+> 其中 $\delta_{ij}$ 是 Kronecker delta：当 $i=j$ 时等于 $1$，当 $i\ne j$ 时等于 $0$。因此所有 $i\ne j$ 的交叉项消失，只剩 $i=j$ 的对角项：
+
+$$
+\begin{aligned}
+&\frac12\sigma^2(t)
+\sum_{i,j}H_{ij}\delta_{ij}\,\mathrm dt
+\\
+&\qquad=
+\frac12\sigma^2(t)
+\sum_{i=1}^d H_{ii}\,\mathrm dt
+\\
+&\qquad=
+\frac12\sigma^2(t)
+\operatorname{tr}(H)\,\mathrm dt.
+\end{aligned}
+$$
+
+> 这里的 $\operatorname{tr}$ 读作“迹”，表示方阵对角线元素之和。对于 Hessian，
+
+$$
+\operatorname{tr}(H)
+\mathrel{=}
+\sum_{i=1}^d
+\frac{\partial^2\varphi}{\partial x_i^2}(Z_t)
+\mathrel{=}
+\Delta\varphi(Z_t).
+$$
+
+> 所以二阶项最终变成
+
+$$
+\frac12\sigma^2(t)
+\Delta\varphi(Z_t)\,\mathrm dt.
+$$
+
+>
+> 把一阶项和二阶项相加，就得到式 (6.5)。二阶项前面是正号：
+
+$$
++\frac12\sigma^2(t)\Delta\varphi(Z_t)\,\mathrm dt.
+$$
+
+> 这里要求 $\varphi$ 光滑，是为了计算梯度和二阶导数；紧支撑条件主要在后面的分部积分中用于消除边界项。
 
 将式 (6.5) 从 $0$ 积分到 $t$，再取期望。满足适当可积性条件时，Itô 随机积分的期望为零，因此
 
@@ -1077,7 +1310,89 @@ $$
 \end{aligned}
 $$
 
-于是
+> **备注：为什么第一个公式有负号，第二个没有？**
+>
+> 核心规则是：分部积分每转移一次空间导数，就产生一个负号。
+>
+> **第一项只转移一次导数。** 令 $F=bp$。根据点积和散度的坐标定义，
+
+$$
+\nabla\varphi\cdot F
+\mathrel{=}
+\sum_{i=1}^d(\partial_{x_i}\varphi)F_i,
+\qquad
+\nabla\cdot F
+\mathrel{=}
+\sum_{i=1}^d\partial_{x_i}F_i.
+$$
+
+> 因此公式中的求和来自点积和散度本身的定义，不是分部积分额外产生的。对每个坐标 $x_i$ 分别进行一次分部积分：
+
+$$
+\begin{aligned}
+\int_{\mathbb R^d}\nabla\varphi\cdot F\,\mathrm dx
+&=
+\sum_{i=1}^d
+\int_{\mathbb R^d}
+(\partial_{x_i}\varphi)F_i\,\mathrm dx
+\\
+&=
+-\sum_{i=1}^d
+\int_{\mathbb R^d}
+\varphi\,\partial_{x_i}F_i\,\mathrm dx
+\\
+&=
+-\int_{\mathbb R^d}
+\varphi\,\nabla\cdot F\,\mathrm dx.
+\end{aligned}
+$$
+
+> 导数只转移一次，所以留下一个负号。
+>
+> **第二项转移两次导数。** Laplace 算子为
+
+$$
+\Delta\varphi
+\mathrel{=}
+\sum_{i=1}^d\partial_{x_i}^2\varphi.
+$$
+
+> 对每个坐标方向连续分部积分两次：
+
+$$
+\begin{aligned}
+\int_{\mathbb R^d}
+(\partial_{x_i}^2\varphi)p\,\mathrm dx
+&=
+-\int_{\mathbb R^d}
+(\partial_{x_i}\varphi)(\partial_{x_i}p)\,\mathrm dx
+\\
+&=
++\int_{\mathbb R^d}
+\varphi\,\partial_{x_i}^2p\,\mathrm dx.
+\end{aligned}
+$$
+
+> 两次转移产生两个负号，
+
+$$
+(-1)^2=+1.
+$$
+
+> 对所有坐标求和，得到
+
+$$
+\int_{\mathbb R^d}
+(\Delta\varphi)p\,\mathrm dx
+\mathrel{=}
+\int_{\mathbb R^d}
+\varphi\,\Delta p\,\mathrm dx.
+$$
+
+>
+> 上述分部积分本来还会产生边界项。由于 $\varphi$ 具有紧支撑，它在足够远处为零，所以这些边界项全部消失。
+
+将上述两个分部积分结果代回式 (6.7)，于是
 
 $$
 \frac{\mathrm d}{\mathrm dt}
@@ -1112,6 +1427,8 @@ $$
 \tag{6.9}
 $$
 
+> **备注：** 式 (6.9) 使用的步骤与式 (4.4) 完全相同，只是将密度 $\rho(t,x)$ 换成了 $p(t,x)$；详见式 (4.4) 下方的备注。
+
 比较式 (6.8) 和式 (6.9)。由于测试函数 $\varphi$ 可以任意选择，只能有
 
 $$
@@ -1126,45 +1443,6 @@ $$
 $$
 
 这就证明了本节开头给出的 Fokker--Planck 方程。
-
-> **补充：式 (6.5) 的二阶项从哪里来？**
->
-> Itô 公式可以形式化地看成二阶 Taylor 展开：
-
-$$
-\mathrm d\varphi(Z_t)
-\mathrel{=}
-\nabla\varphi(Z_t)\cdot\mathrm dZ_t
-\mathbin{+}
-\frac12
-(\mathrm dZ_t)^{\mathsf T}
-\nabla^2\varphi(Z_t)
-\mathrm dZ_t.
-$$
-
-> 代入 $\mathrm dZ_t=b\,\mathrm dt+\sigma\,\mathrm dW_t$，并使用
-
-$$
-(\mathrm dt)^2=0,
-\qquad
-\mathrm dt\,\mathrm dW_t=0,
-\qquad
-\mathrm dW_t\mathrm dW_t^{\mathsf T}
-\mathrel{=}
-\mathrm{Id}\,\mathrm dt,
-$$
-
-> 二阶项只剩
-
-$$
-\frac12\sigma^2(t)
-\operatorname{tr}(\nabla^2\varphi(Z_t))\,\mathrm dt
-\mathrel{=}
-\frac12\sigma^2(t)
-\Delta\varphi(Z_t)\,\mathrm dt.
-$$
-
-> 因此式 (6.5) 比普通链式法则多出一个正的二阶项。
 
 ### 6.4 定义 score，并用它设计漂移
 
@@ -1208,13 +1486,15 @@ $$
 
 这个等式是后面证明漂移与扩散相互抵消的关键。
 
-例如，若
+> **备注：Gaussian 分布的 score。**
+>
+> 例如，若
 
 $$
 \rho(x)=\mathcal N(\mu,\alpha^2\mathrm{Id}),
 $$
 
-那么
+> 那么
 
 $$
 s(x)
@@ -1224,7 +1504,7 @@ s(x)
 \frac{\mu-x}{\alpha^2}.
 $$
 
-所以 Gaussian 的 score 总是指向分布中心 $\mu$：离中心越远，指向中心的作用越强。
+> 所以 Gaussian 的 score 总是指向分布中心 $\mu$：离中心越远，指向中心的作用越强。
 
 需要注意两点：
 
@@ -1237,7 +1517,33 @@ $$
 
 #### 从目标概率流反推出漂移
 
-现在已经知道噪声会在密度方程中增加
+根据第 6.3 节推导出的 Fokker--Planck 方程 (6.10)，噪声会在密度方程中增加
+
+$$
+\frac12\sigma^2(t)\Delta p.
+$$
+
+**备注：这个扩散项从哪里来？**
+
+它来自布朗噪声在 Itô 公式中产生的二阶项。证明过程可以压缩成三步：
+
+1. Itô 公式中出现
+   $$
+   \frac12\sigma^2(t)\Delta\varphi(Z_t)\,\mathrm dt;
+   $$
+2. 对轨迹取期望并按密度 $p$ 写成积分，得到
+   $$
+   \frac12\sigma^2(t)
+   \int_{\mathbb R^d}(\Delta\varphi)p\,\mathrm dx;
+   $$
+3. 对空间变量分部积分两次，把 $\Delta$ 从 $\varphi$ 转移到 $p$：
+   $$
+   \int_{\mathbb R^d}(\Delta\varphi)p\,\mathrm dx
+   \mathrel{=}
+   \int_{\mathbb R^d}\varphi\,\Delta p\,\mathrm dx.
+   $$
+
+因此密度方程中最终出现
 
 $$
 \frac12\sigma^2(t)\Delta p.
@@ -1263,7 +1569,29 @@ $$
 \frac12\sigma^2\Delta p,
 $$
 
-比目标连续性方程多出扩散项，通常会改变原来的密度路径。
+而预先规定的目标密度路径满足
+
+$$
+\boxed{
+\partial_t\rho
+\mathrel{=}
+-\nabla\cdot(u\rho).
+}
+$$
+
+我们的目标是证明 SDE 的实际密度 $p$ 等于 $\rho$，所以必须让这个已知的 $\rho$ 也满足 SDE 的密度方程。若把候选函数 $p=\rho$ 代入上面的方程，右边会变成
+
+$$
+-\nabla\cdot(u\rho)
+\mathbin{+}
+\frac12\sigma^2\Delta\rho
+\mathrel{=}
+\partial_t\rho
+\mathbin{+}
+\frac12\sigma^2\Delta\rho.
+$$
+
+它通常不等于 $\partial_t\rho$，因为多出了扩散项 $\tfrac12\sigma^2\Delta\rho$。因此，直接在漂移 $u$ 上加噪声通常会改变原来的目标密度路径。
 
 从这里开始，为了简化公式，定义扩散率
 
@@ -1295,6 +1623,61 @@ $$
 \mathrel{=}
 \nabla\cdot(\kappa\nabla p).
 $$
+
+> **备注：这个等式怎么来的？**
+>
+> 这里的梯度和散度都是对空间变量 $x$ 求导。乘积求导公式给出
+
+$$
+\nabla_x\cdot(\kappa\nabla_x p)
+\mathrel{=}
+(\nabla_x\kappa)\cdot\nabla_x p
+\mathbin{+}
+\kappa\,\nabla_x\cdot(\nabla_x p).
+$$
+
+> 因为 $\kappa=\kappa(t)$ 只依赖时间，不依赖空间位置 $x$，所以
+
+$$
+\nabla_x\kappa(t)=0.
+$$
+
+> 同时，根据 Laplace 算子的定义，
+
+$$
+\nabla_x\cdot(\nabla_x p)
+\mathrel{=}
+\Delta p.
+$$
+
+> 因此
+
+$$
+\nabla_x\cdot(\kappa(t)\nabla_x p)
+\mathrel{=}
+\kappa(t)\Delta p.
+$$
+
+>
+> 写成坐标形式也可以直接看出：
+
+$$
+\begin{aligned}
+\nabla_x\cdot(\kappa\nabla_x p)
+&=
+\sum_{i=1}^d
+\partial_{x_i}\!\left(\kappa(t)\partial_{x_i}p\right)
+\\
+&=
+\kappa(t)
+\sum_{i=1}^d\partial_{x_i}^2p
+\\
+&=
+\kappa(t)\Delta p.
+\end{aligned}
+$$
+
+> 如果 $\kappa$ 还依赖空间位置，即 $\kappa=\kappa(t,x)$，就会多出 $(\nabla_x\kappa)\cdot\nabla_xp$，此时不能直接使用上面的等式。
 
 所以方程可以改写为概率质量守恒形式
 
@@ -1353,10 +1736,11 @@ u(t,x)+\kappa(t)s(t,x).
 \tag{6.14}
 $$
 
-这一步的物理意义很简单：
+这一步的物理意义是：
 
 $$
-\underbrace{\kappa\rho s}_{+\kappa\nabla\rho\text{，score 漂移流量}}
+\underbrace{\kappa\rho s}_{\text{score 漂移流量}
+=+\kappa\nabla\rho}
 \mathbin{+}
 \underbrace{(-\kappa\nabla\rho)}_{\text{扩散流量}}
 \mathrel{=}
@@ -1364,6 +1748,40 @@ $$
 $$
 
 因此，score 漂移抵消扩散流量，最后只剩目标流量 $\rho u$。
+
+> **备注：这个抵消公式从哪里来？**
+>
+> 它来自三条已经得到的关系：
+>
+> 1. SDE 的总概率流量为 $J_p=bp-\kappa\nabla p$；
+> 2. 式 (6.14) 给出 $b=u+\kappa s$；
+> 3. 式 (6.12) 给出 $\rho s=\nabla\rho$。
+>
+> 在目标状态 $p=\rho$ 下，将 $b=u+\kappa s$ 代入总概率流量：
+
+$$
+\begin{aligned}
+J_\rho
+&=
+b\rho-\kappa\nabla\rho
+\\
+&=
+(u+\kappa s)\rho-\kappa\nabla\rho
+\\
+&=
+u\rho
+\mathbin{+}
+\kappa\rho s
+\mathbin{-}
+\kappa\nabla\rho.
+\end{aligned}
+$$
+
+> 再使用 $\rho s=\nabla\rho$，后两项正好抵消，所以
+
+$$
+J_\rho=u\rho.
+$$
 
 严格地说，只要额外概率流的散度为零就不会改变密度，所以漂移不绝对唯一。式 (6.14) 是最直接的逐点抵消选择。
 
