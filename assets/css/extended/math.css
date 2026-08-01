@@ -1,0 +1,40 @@
+.math-block {
+  position: relative;
+  margin: 1rem 0;
+  padding-top: 1.8rem;
+}
+
+.math-block mjx-container[display="true"] {
+  margin: 0.5rem 0 0 !important;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 0.25rem 0;
+}
+
+.math-copy-button {
+  position: absolute;
+  z-index: 1;
+  top: 0;
+  right: 0;
+  padding: 0.2rem 0.55rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--theme);
+  color: var(--secondary);
+  cursor: pointer;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  opacity: 0.72;
+  transition: color 0.15s ease, opacity 0.15s ease;
+}
+
+.math-copy-button:hover,
+.math-copy-button:focus-visible,
+.math-copy-button[data-copied="true"] {
+  color: var(--primary);
+  opacity: 1;
+}
+
+.math-source {
+  display: none;
+}

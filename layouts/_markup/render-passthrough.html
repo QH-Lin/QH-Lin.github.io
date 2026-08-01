@@ -1,7 +1,11 @@
 {{- if eq .Type "block" }}
+<div class="math-block">
+<button class="math-copy-button" type="button" title="复制 LaTeX（含 $$）" aria-label="复制该公式的 LaTeX">复制 LaTeX</button>
+<textarea class="math-source" hidden aria-hidden="true" tabindex="-1">{{ .Inner }}</textarea>
 \[
 {{ .Inner }}
 \]
+</div>
 {{- else }}
 \({{ .Inner }}\)
 {{- end }}

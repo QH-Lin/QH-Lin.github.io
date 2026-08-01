@@ -1,0 +1,41 @@
+<script>
+  (() => {
+    const copyText = async (text) => {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+        return;
+      }
+
+      const textarea = document.createElement('textarea');
+      textarea.value = text;
+      textarea.style.position = 'fixed';
+      textarea.style.opacity = '0';
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand('copy');
+      textarea.remove();
+    };
+
+    document.addEventListener('click', async (event) => {
+      const button = event.target.closest('.math-copy-button');
+      if (!button) return;
+
+      const source = button.closest('.math-block')?.querySelector('.math-source');
+      if (!source) return;
+
+      const originalLabel = '复制 LaTeX';
+      try {
+        await copyText(`$$\n${source.value.trim()}\n$$`);
+        button.textContent = '已复制';
+        button.dataset.copied = 'true';
+      } catch (error) {
+        button.textContent = '复制失败';
+      }
+
+      window.setTimeout(() => {
+        button.textContent = originalLabel;
+        delete button.dataset.copied;
+      }, 1600);
+    });
+  })();
+</script>
