@@ -1,5 +1,5 @@
 ---
-title: "流匹配RL: 从统一diffusion与flow matching谈起"
+title: "æµå¹éRL: ä»ç»ä¸diffusionä¸flow matchingè°èµ·"
 date: 2026-07-31T17:39:06+08:00
 draft: false
 tags:
@@ -8,7 +8,7 @@ tags:
   - reinforcement learning
 categories:
   - AI
-description: "从随机插值与概率路径出发，统一理解 Diffusion、Flow Matching、ODE 与 SDE。"
+description: "ä»éæºæå¼ä¸æ¦çè·¯å¾åºåï¼ç»ä¸çè§£ DiffusionãFlow MatchingãODE ä¸ SDEã"
 showToc: true
 TocOpen: false
 math: true
@@ -279,6 +279,14 @@ $$
 ]
 &=
 \mathbb E\!\left[
+\mathbb E\!\left[
+\nabla\varphi(x_t)\cdot Y_t
+\mid x_t
+\right]
+\right]
+\\
+&=
+\mathbb E\!\left[
 \nabla\varphi(x_t)\cdot
 \mathbb E[Y_t\mid x_t]
 \right]
@@ -295,7 +303,7 @@ $$
 \tag{4.2}
 $$
 
-> **备注：这里使用了塔式法则和条件期望的“已知量提出”性质。**
+> **备注：第一个等号使用塔式法则，第二个等号使用条件期望的“已知量提出”性质。**
 >
 > 条件期望 $\mathbb E[Y_t\mid x_t]$ 可以理解为：按照 $x_t$ 的取值把样本分组，然后在每一组内对 $Y_t$ 求平均。
 >
@@ -318,13 +326,74 @@ $$
 \tag{4.3}
 $$
 
-> **备注：分部积分做了什么？**
+> **备注：分部积分 **
 >
-> 令概率流量 $F=\rho u$。乘积求导公式为 $\nabla\cdot(\varphi F)=\nabla\varphi\cdot F+\varphi\nabla\cdot F$。
+> 式 (4.2) 的最后一项是
+
+$$
+\int_{\mathbb R^d}\nabla\varphi(x)\cdot(\rho u)(t,x)\,\mathrm dx.
+$$
+
+> 分部积分的作用，是把原来作用在 $\varphi$ 上的空间导数 $\nabla$ 转移到 $\rho u$ 上；转移后会产生一个负号。
 >
-> 在整个 $\mathbb R^d$ 上积分时，由于 $\varphi$ 在足够远处为零，边界项消失，因此 $\displaystyle \int_{\mathbb R^d}\nabla\varphi\cdot F\,\mathrm dx=-\int_{\mathbb R^d}\varphi\,\nabla\cdot F\,\mathrm dx$。
+> 以一维情形为例。由乘积求导公式，
+
+$$
+(\varphi(x)F(x))'
+\mathrel{=}
+\varphi'(x)F(x)+\varphi(x)F'(x).
+$$
+
+> 在区间 $[a,b]$ 上对等式两边积分，得到
+
+$$
+\int_a^b(\varphi F)'(x)\,\mathrm dx
+\mathrel{=}
+\int_a^b\varphi'(x)F(x)\,\mathrm dx
++
+\int_a^b\varphi(x)F'(x)\,\mathrm dx.
+$$
+
+> 根据微积分基本定理，左边等于两个端点处函数值之差：
+
+$$
+\int_a^b(\varphi F)'(x)\,\mathrm dx
+\mathrel{=}
+\varphi(b)F(b)-\varphi(a)F(a).
+$$
+
+> 因而
+
+$$
+\int_a^b\varphi'(x)F(x)\,\mathrm dx
+\mathrel{=}
+\underbrace{\varphi(b)F(b)-\varphi(a)F(a)}_{\text{边界项}}
+\mathbin{-}
+\int_a^b\varphi(x)F'(x)\,\mathrm dx.
+$$
+
+> 这就是一维分部积分公式。负号来自把 $\int_a^b\varphi(x)F'(x)\,\mathrm dx$ 移到等号右边，并不是额外规定的。
 >
-> 代入 $F=\rho u$ 就得到式 (4.3)。其中 $\rho u$ 表示概率流量，$\nabla\cdot(\rho u)$ 表示一个位置附近的净流出程度：净流出为正时，该处概率密度会下降，所以公式中出现负号。
+> 把区间扩展到整个实数轴，就有
+
+$$
+\int_{\mathbb R}\varphi'(x)F(x)\,\mathrm dx
+\mathrel{=}
+[\varphi(x)F(x)]_{-\infty}^{+\infty}
+\mathbin{-}
+\int_{\mathbb R}\varphi(x)F'(x)\,\mathrm dx.
+$$
+
+> 如果 $\varphi$ 在足够远处为零，或者更一般地，$\varphi(x)F(x)$ 在 $x\to\pm\infty$ 时衰减到零，那么边界项消失，于是
+
+$$
+\int_{\mathbb R}\varphi'(x)F(x)\,\mathrm dx
+\mathrel{=}
+-\int_{\mathbb R}\varphi(x)F'(x)\,\mathrm dx.
+$$
+
+>
+> 最后代入 $F=\rho u$，便由式 (4.2) 得到式 (4.3)。直观上，$\rho u$ 是概率流量，$\nabla\cdot(\rho u)>0$ 表示某处流出的概率多于流入的概率，因此该处的概率密度应当下降；这也解释了负号的物理意义。
 
 另一方面，
 
@@ -414,7 +483,7 @@ X_0\sim\rho_0.
 \tag{5.1}
 $$
 
-因此并不存在两个独立推导出来、后来才被证明相同的速度场。逻辑是
+逻辑是
 
 $$
 \boxed{
@@ -435,7 +504,7 @@ X_t\sim q(t,\cdot).
 \tag{5.2}
 $$
 
-这里 $q$ 是 ODE 粒子群的密度，不是速度场。
+这里 $q$ 是 ODE 粒子群的密度。
 
 ### 5.2 为什么 $q$ 也满足连续性方程
 
@@ -451,6 +520,11 @@ $$
 \begin{aligned}
 \frac{\mathrm d}{\mathrm dt}
 \mathbb E[\varphi(X_t)]
+&=
+\mathbb E\!\left[
+\frac{\mathrm d}{\mathrm dt}\varphi(X_t)
+\right]
+\\
 &=
 \mathbb E[
 \nabla\varphi(X_t)\cdot\dot X_t
@@ -516,6 +590,12 @@ Y_t
 {\color{red}{\text{对 }x_t\text{ 做条件平均}}}
 }{=}}
 \mathbb E[
+\nabla\varphi(x_t)\cdot
+\mathbb E[Y_t\mid x_t]
+]
+\\
+&=
+\mathbb E[
 \nabla\varphi(x_t)\cdot u(t,x_t)
 ],
 \\[3mm]
@@ -537,6 +617,18 @@ Y_t
 }
 \tag{5.5a}
 $$
+
+**两种方法的物理意义：**
+
+- **随机插值描述微观的随机轨迹。** 即使多条轨迹在同一时刻到达同一位置 $x_t=x$，它们的瞬时速度 $Y_t$ 也可能不同，因为它们可能来自不同的端点或噪声样本。边际密度并不分别追踪这些不同速度，只感受到它们在当前位置的条件平均
+  $$
+  u(t,x)=\mathbb E[Y_t\mid x_t=x].
+  $$
+  因而，$u$ 表示位置 $x$ 处概率质量的平均输运方向；速度偏差 $Y_t-u(t,x_t)$ 在同一位置进行条件平均后相互抵消。
+
+- **ODE 描述宏观的确定性概率流。** ODE 直接规定每个位置上的粒子速度为 $u(t,x)$。所有到达同一位置的 ODE 粒子都使用同一个速度场，不再保留随机插值中“同一位置可能具有不同瞬时速度”的微观差异。因此，ODE 可以看成直接实现条件平均后的概率流。
+
+两者的微观轨迹可以不同，但只要使用同一个速度场 $u$，它们对边际密度产生的概率流分别是 $\rho u$ 和 $qu$，并满足相同形式的连续性方程。随机插值负责从随机轨迹中提取平均速度场，ODE 则使用这个平均速度场输运概率质量。
 
 红色文字就是唯一的关键区别：随机插值需要先对随机速度做条件平均；ODE 直接使用定义中的确定速度。完成这一步以后，两边都变成“密度由同一个速度场 $u$ 输运”，后续的分部积分完全相同：
 
@@ -616,86 +708,155 @@ $$
 
 ### 6.1 本章要证明什么
 
-第 4 章已经从随机插值得到目标边际密度 $\rho$ 和速度场 $u$，并证明
+第 4 章已经从随机插值得到目标边际密度 $\rho(t,x)$ 和条件平均速度场 $u(t,x)$，并证明它们满足连续性方程
 
 $$
 \boxed{
-\partial_t\rho+\nabla\cdot(\rho u)=0,
+\partial_t\rho(t,x)
++
+\nabla\cdot\bigl(\rho(t,x)u(t,x)\bigr)
+\mathrel{=}
+0,
 \qquad
 \rho(0,x)=\rho_0(x).
 }
 \tag{6.1}
 $$
 
-第 5 章构造了 ODE $\dot X_t=u(t,X_t)$，并证明 ODE 的密度 $q$ 满足 $q=\rho$。
-
-本章的目标是再构造一个 SDE $Z_t$，并证明它的密度 $p$ 也满足
+第 5 章进一步说明：由同一个速度场驱动的 ODE
 
 $$
-\boxed{p(t,x)=\rho(t,x).}
+\dot X_t=u(t,X_t)
 $$
 
-所以要区分三个随机对象：
+可以实现这条边际密度路径。
 
-| 对象 | 来源 | 时刻 $t$ 的密度 |
+本章要回答一个新的问题：
+
+> 能否在轨迹中加入布朗噪声，同时仍让每个时刻的边际密度保持为 $\rho(t,x)$？
+
+答案是可以，但不能只在 ODE 上直接加噪声。随机扩散会摊平密度，因此还需要在漂移中加入一个由 score 决定的补偿项。
+
+本章将构造 SDE $Z_t$，记它的实际密度为 $p(t,x)$，并证明
+
+$$
+\boxed{
+p(t,x)=\rho(t,x).
+}
+$$
+
+全文需要区分三个随机对象：
+
+| 随机对象 | 如何产生 | 时刻 $t$ 的密度 |
 |---|---|---|
-| $x_t$ | 训练时构造的随机插值 | $\rho(t,x)$ |
+| $x_t$ | 训练时设计的随机插值 | $\rho(t,x)$ |
 | $X_t$ | 速度场 $u$ 驱动的 ODE | $q(t,x)$ |
 | $Z_t$ | 本章构造的 SDE | $p(t,x)$ |
 
-### 6.2 SDE 中的符号
+证明路线是：
 
-先定义目标边际密度 $\rho$ 的 score：
+1. 先推导一般 SDE 的 Fokker--Planck 方程；
+2. 再要求它在密度为 $\rho$ 时具有与 ODE 相同的概率流量 $\rho u$；
+3. 由此反推出合适的漂移；
+4. 最后用相同 PDE、相同初值和解的唯一性证明 $p=\rho$。
+
+### 6.2 Itô SDE 的符号与尺度
+
+#### 随机状态、空间位置和密度
+
+- $Z_t\in\mathbb R^d$ 是时刻 $t$ 的随机状态；
+- $x\in\mathbb R^d$ 是确定的空间位置，是密度和向量场的自变量；
+- $p(t,x)$ 是 $Z_t$ 的实际密度，即 $Z_t\sim p(t,\cdot)$；
+- $\rho(t,x)$ 是随机插值预先规定的目标密度。
+
+在证明结束以前，$p$ 和 $\rho$ 必须严格区分：$p$ 是 SDE 实际产生的未知密度，$\rho$ 是希望它实现的候选密度。
+
+#### 布朗运动
+
+令 $W_t\in\mathbb R^d$ 为 $d$ 维标准 Wiener 过程，也称标准布朗运动。对有限的小时间步 $\Delta t>0$，
 
 $$
-\boxed{
-s(t,x)
+\Delta W_t
 :=
-\nabla_x\log\rho(t,x).
-}
-\tag{6.2}
+W_{t+\Delta t}-W_t
+\sim
+\mathcal N(0,\Delta t\,\mathrm{Id}),
 $$
 
-再取一个只依赖时间的非负函数
+其中 $\mathrm{Id}$ 是 $d\times d$ 单位矩阵。等价地，
 
 $$
-\kappa(t)\ge0.
+\Delta W_t
+\overset{\mathrm d}{=}
+\sqrt{\Delta t}\,\xi,
+\qquad
+\xi\sim\mathcal N(0,\mathrm{Id}),
 $$
 
-本章使用的符号如下。
+这里 $\overset{\mathrm d}{=}$ 表示两边分布相同。
 
-| 符号 | 含义 |
-|---|---|
-| $Z_t\in\mathbb R^d$ | SDE 在时刻 $t$ 的随机状态 |
-| $p(t,x)$ | $Z_t$ 的概率密度，即 $Z_t\sim p(t,\cdot)$ |
-| $\mathrm dt$ | 一个无穷小的时间增量 |
-| $\mathrm dZ_t$ | 随机状态 $Z_t$ 在时间 $\mathrm dt$ 内的增量 |
-| $W_t$ | $d$ 维标准 Wiener 过程，也称布朗运动 |
-| $\mathrm dW_t$ | 一个极小时间步中的高斯随机增量 |
-| $\mathrm{Id}$ | $d\times d$ 单位矩阵 |
-| $u(t,x)$ | 第 3—5 章得到的条件平均速度场 |
-| $s(t,x)$ | $\rho(t,x)$ 的 score |
-| $\kappa(t)$ | 可调的扩散强度 |
-| $b(t,x)$ | SDE 的漂移速度 |
-| $\nabla\cdot$ | 散度，描述流量的局部净流出 |
-| $\Delta=\sum_{i=1}^d\partial_{x_i}^2$ | Laplace 算子，描述扩散带来的平滑效应 |
-
-这里假设内部时刻的 $\rho(t,x)$ 足够光滑并且为正，使 score 有定义。
-
-### 6.3 构造 SDE
-
-定义漂移速度
+> **备注：为什么这两种写法等价？**
+>
+> 第一种写法来自标准布朗运动的定义：长度为 $\Delta t$ 的时间区间对应一个均值为零、协方差为 $\Delta t\,\mathrm{Id}$ 的高斯增量。
+>
+> 令 $\xi\sim\mathcal N(0,\mathrm{Id})$，并定义
 
 $$
-\boxed{
-b(t,x)
+Y:=\sqrt{\Delta t}\,\xi.
+$$
+
+> 高斯向量乘以常数后仍是高斯向量。它的均值为
+
+$$
+\mathbb E[Y]
 \mathrel{=}
-u(t,x)+\kappa(t)s(t,x).
-}
-\tag{6.3}
+\sqrt{\Delta t}\,\mathbb E[\xi]
+=0,
 $$
 
-用这个漂移构造 SDE：
+> 协方差为
+
+$$
+\begin{aligned}
+\operatorname{Cov}(Y)
+&=
+\mathbb E[YY^{\mathsf T}]
+\\
+&=
+\Delta t\,\mathbb E[\xi\xi^{\mathsf T}]
+\\
+&=
+\Delta t\,\mathrm{Id}.
+\end{aligned}
+$$
+
+> 因此
+
+$$
+\sqrt{\Delta t}\,\xi
+\sim
+\mathcal N(0,\Delta t\,\mathrm{Id}),
+$$
+
+> 与 $\Delta W_t$ 具有完全相同的分布，所以可以写成
+
+$$
+\Delta W_t
+\overset{\mathrm d}{=}
+\sqrt{\Delta t}\,\xi.
+$$
+
+> 从坐标上看也一样：$\xi$ 的每个分量都是相互独立的 $\mathcal N(0,1)$；乘以 $\sqrt{\Delta t}$ 后，每个分量都变成 $\mathcal N(0,\Delta t)$。
+>
+> 这也是数值模拟布朗运动的方法：每走一个长度为 $\Delta t$ 的时间步，就重新采样一个独立的标准高斯向量 $\xi$，再乘以 $\sqrt{\Delta t}$ 作为该步的布朗增量。
+>
+> 需要注意，$\overset{\mathrm d}{=}$ 只表示两边的概率分布相同，不表示两个随机变量在每一次采样时都取到相同数值。它说明的是：可以用一个标准高斯向量 $\xi$ 生成一个与布朗增量同分布的样本。
+
+因此布朗增量是 $\sqrt{\Delta t}$ 量级，而不是 $\Delta t$ 量级。符号 $\mathrm dW_t$ 是布朗增量的连续时间记号，不能理解成 $\dot W_t\,\mathrm dt$，因为布朗轨迹几乎处处不可微。
+
+#### 漂移和噪声幅度
+
+本章采用 Itô 解释，先把 SDE 写成最直观的形式：
 
 $$
 \boxed{
@@ -703,43 +864,222 @@ $$
 \mathrel{=}
 b(t,Z_t)\,\mathrm dt
 +
-\sqrt{2\kappa(t)}\,\mathrm dW_t,
+\sigma(t)\,\mathrm dW_t,
 \qquad
-Z_0\sim\rho_0.
+\sigma(t)\ge0.
 }
-\tag{6.4}
+\tag{6.2}
 $$
 
-将 $b=u+\kappa s$ 展开就是
+除非特别说明，本章后面出现的所有 SDE 和随机积分都按 Itô 意义理解。
+
+式中：
+
+- $b(t,x)\in\mathbb R^d$ 是漂移速度，控制随机状态的平均移动方向；
+- $\sigma(t)\ge0$ 是直接乘在布朗增量上的**噪声幅度**；
+- $\sigma(t)=0$ 表示该时刻不加入新噪声；
+- $\sigma(t)$ 越大，单位时间内随机增量的方差越大，单条轨迹越随机。
+
+为了简化推导，本章只考虑 $\sigma$ 依赖时间、且所有空间方向使用相同噪声幅度的情形，因此扩散是各向同性的。
+
+> **备注：什么是 Itô 型 SDE？**
+>
+> “Itô 型 SDE”指其中的随机积分按照 Itô 规则定义的随机微分方程。更一般的形式为
 
 $$
 \mathrm dZ_t
 \mathrel{=}
-\bigl(u+\kappa s\bigr)(t,Z_t)\,\mathrm dt
+b(t,Z_t)\,\mathrm dt
 +
-\sqrt{2\kappa(t)}\,\mathrm dW_t.
+\sigma(t,Z_t)\,\mathrm dW_t.
 $$
 
-> **备注：SDE 的两部分分别表示什么？**
->
-> 在一个很小的时间长度 $\Delta t$ 内，式 (6.4) 可以直观地读成
->
-> $Z_{t+\Delta t}-Z_t\approx b(t,Z_t)\Delta t+\sqrt{2\kappa(t)\Delta t}\,\xi$，其中 $\xi\sim\mathcal N(0,\mathrm{Id})$。
->
-> $b\Delta t$ 是确定性漂移；$\sqrt{2\kappa\Delta t}\,\xi$ 是随机扩散。给定初始点后，ODE 轨迹是确定的，而 SDE 仍会在运行中不断获得新的随机性。
-
-记 $Z_t$ 的密度为
+> 它严格表示积分方程
 
 $$
-\boxed{Z_t\sim p(t,\cdot).}
+Z_t
+\mathrel{=}
+Z_0
++
+\int_0^t b(r,Z_r)\,\mathrm dr
++
+\int_0^t\sigma(r,Z_r)\,\mathrm dW_r.
+$$
+
+> 第一个积分是普通时间积分，最后一项按照 Itô 随机积分解释。
+>
+> Itô 规则的核心是使用每个小区间的左端点。把 $[0,t]$ 分成小区间 $[t_k,t_{k+1}]$，则随机积分由下列和式的极限定义：
+
+$$
+\int_0^t\sigma(r,Z_r)\,\mathrm dW_r
+\approx
+\sum_k
+\sigma(t_k,Z_{t_k})
+\bigl(W_{t_{k+1}}-W_{t_k}\bigr).
+$$
+
+> 因此，在计算下一步的随机增量时，系数使用当前已经知道的状态 $Z_{t_k}$：
+
+$$
+Z_{t_{k+1}}-Z_{t_k}
+\approx
+b(t_k,Z_{t_k})\Delta t
++
+\sigma(t_k,Z_{t_k})\sqrt{\Delta t}\,\xi_k,
+\qquad
+\xi_k\sim\mathcal N(0,\mathrm{Id}).
+$$
+
+> 当前的系数不依赖尚未发生的未来布朗增量。正因为采用左端点，满足适当可积性条件时，Itô 随机积分具有零均值性质：
+
+$$
+\mathbb E\!\left[
+\int_0^t\sigma(r,Z_r)\,\mathrm dW_r
+\right]
+=0.
+$$
+
+在一个很小但有限的时间步内，给定 $Z_t=x$，Euler--Maruyama 近似进行数值求解
+
+$$
+Z_{t+\Delta t}-Z_t
+\approx
+b(t,x)\Delta t
++
+\sigma(t)\sqrt{\Delta t}\,\xi,
+\qquad
+\xi\sim\mathcal N(0,\mathrm{Id}).
+\tag{6.3}
+$$
+
+所以
+
+$$
+\begin{aligned}
+\mathbb E[Z_{t+\Delta t}-Z_t\mid Z_t=x]
+&\approx
+b(t,x)\Delta t,
+\\
+\operatorname{Cov}(Z_{t+\Delta t}-Z_t\mid Z_t=x)
+&\approx
+\sigma^2(t)\Delta t\,\mathrm{Id}.
+\end{aligned}
+\tag{6.4}
+$$
+
+这说明 $b$ 控制平均位移，而 $\sigma$ 直接控制随机增量的标准差。
+
+### 6.3 目标密度的 score
+
+为了抵消后面布朗噪声造成的扩散，需要知道目标密度 $\rho(t,x)$ 在每个位置朝哪个方向增大。这个方向由 score 给出。
+
+假设 $\rho(t,x)>0$ 且足够光滑，定义
+
+$$
+\boxed{
+s(t,x)
+:=
+\nabla_x\log\rho(t,x).
+}
 \tag{6.5}
 $$
 
-### 6.4 从 SDE 推导密度 $p$ 的方程
+score 是一个 $d$ 维向量。它的物理含义是：
 
-这一步对应第 4、5 章的“对测试函数求期望”，只是 SDE 需要使用 Itô 公式。
+- 方向：指向当前位置附近密度上升最快的方向；
+- 大小：表示附近密度变化得有多快；
+- 在密度的局部峰顶，score 为零。
 
-对光滑测试函数 $\varphi$，Itô 公式给出
+由链式法则，
+
+$$
+s(t,x)
+\mathrel{=}
+\frac{\nabla_x\rho(t,x)}{\rho(t,x)}.
+$$
+
+因此
+
+$$
+\boxed{
+\rho(t,x)s(t,x)
+\mathrel{=}
+\nabla_x\rho(t,x).
+}
+\tag{6.6}
+$$
+
+这个等式是后面证明漂移与扩散相互抵消的关键。
+
+例如，若
+
+$$
+\rho(x)=\mathcal N(\mu,\alpha^2\mathrm{Id}),
+$$
+
+那么
+
+$$
+s(x)
+\mathrel{=}
+-\frac{x-\mu}{\alpha^2}
+\mathrel{=}
+\frac{\mu-x}{\alpha^2}.
+$$
+
+所以 Gaussian 的 score 总是指向分布中心 $\mu$：离中心越远，指向中心的作用越强。
+
+需要注意两点：
+
+1. 这里的 $s(t,x)$ 是目标密度 $\rho(t,x)$ 的 score，不是 SDE 实际密度 $p(t,x)$ 的 score。
+2. score 本身不是速度。后面乘上由噪声幅度决定的系数 $\tfrac12\sigma^2(t)$ 后，
+   $$
+   \frac12\sigma^2(t)s(t,x)
+   $$
+   才成为漂移速度的一部分，用来抵消布朗扩散。
+
+### 6.4 先得到一般 SDE 的 Fokker--Planck 方程
+
+先给出本节结论。对于式 (6.2)
+
+$$
+\mathrm dZ_t
+\mathrel{=}
+b(t,Z_t)\,\mathrm dt
++
+\sigma(t)\,\mathrm dW_t,
+$$
+
+如果 $Z_t$ 的密度为 $p(t,x)$，那么它满足
+
+$$
+\boxed{
+\partial_t p
+\mathrel{=}
+-\nabla\cdot(bp)
++
+\frac12\sigma^2(t)\Delta p.
+}
+$$
+
+这个方程称为 Fokker--Planck 方程。它描述的不是单条随机轨迹，而是大量 SDE 轨迹形成的概率密度如何随时间变化：
+
+- $-\nabla\cdot(bp)$ 是漂移造成的概率输运；
+- $\tfrac12\sigma^2\Delta p$ 是噪声造成的概率扩散。
+
+下面证明这个结论。证明链只有四步：
+
+$$
+\text{Itô 公式}
+\longrightarrow
+\text{取期望}
+\longrightarrow
+\text{按密度积分并分部积分}
+\longrightarrow
+\text{得到密度方程}.
+$$
+
+取光滑、紧支撑的测试函数 $\varphi\in C_c^\infty(\mathbb R^d)$。Itô 公式给出
 
 $$
 \begin{aligned}
@@ -748,20 +1088,15 @@ $$
 \nabla\varphi(Z_t)\cdot b(t,Z_t)\,\mathrm dt
 \\
 &+
-\kappa(t)\Delta\varphi(Z_t)\,\mathrm dt
+\frac12\sigma^2(t)\Delta\varphi(Z_t)\,\mathrm dt
 \\
 &+
-\sqrt{2\kappa(t)}
-\nabla\varphi(Z_t)\cdot\mathrm dW_t.
+\sigma(t)\nabla\varphi(Z_t)\cdot\mathrm dW_t.
 \end{aligned}
-\tag{6.6}
+\tag{6.7}
 $$
 
-> **备注：为什么比普通链式法则多出 $\kappa\Delta\varphi$？**
->
-> Brownian 增量的大小是 $\sqrt{\Delta t}$ 级别，所以它的平方是 $\Delta t$ 级别，不能忽略。Itô 公式会保留这个二阶贡献，最终得到 $\kappa\Delta\varphi$。这正是 SDE 与 ODE 在密度方程上的主要区别。
-
-对式 (6.6) 取期望。Itô 随机积分的期望为零，因此
+将式 (6.7) 从 $0$ 积分到 $t$，再取期望。满足适当可积性条件时，Itô 随机积分的期望为零，因此
 
 $$
 \begin{aligned}
@@ -773,12 +1108,13 @@ $$
 ]
 \\
 &+
-\kappa(t)\mathbb E[\Delta\varphi(Z_t)].
+\frac12\sigma^2(t)
+\mathbb E[\Delta\varphi(Z_t)].
 \end{aligned}
-\tag{6.7}
+\tag{6.8}
 $$
 
-因为 $Z_t$ 的密度是 $p(t,x)$，所以
+因为 $Z_t$ 的密度是 $p(t,x)$，可以把期望写成积分：
 
 $$
 \begin{aligned}
@@ -789,14 +1125,28 @@ $$
 \nabla\varphi(x)\cdot b(t,x)p(t,x)\,\mathrm dx
 \\
 &+
-\kappa(t)
+\frac12\sigma^2(t)
 \int_{\mathbb R^d}
 \Delta\varphi(x)p(t,x)\,\mathrm dx.
 \end{aligned}
-\tag{6.8}
+\tag{6.9}
 $$
 
-对第一项分部积分一次，对第二项分部积分两次，得到
+对第一项分部积分一次，对第二项分部积分两次。因为 $\varphi$ 具有紧支撑，边界项为零：
+
+$$
+\begin{aligned}
+\int_{\mathbb R^d}\nabla\varphi\cdot(bp)\,\mathrm dx
+&=
+-\int_{\mathbb R^d}\varphi\,\nabla\cdot(bp)\,\mathrm dx,
+\\
+\int_{\mathbb R^d}(\Delta\varphi)p\,\mathrm dx
+&=
+\int_{\mathbb R^d}\varphi\,\Delta p\,\mathrm dx.
+\end{aligned}
+$$
+
+于是
 
 $$
 \frac{\mathrm d}{\mathrm dt}
@@ -805,12 +1155,22 @@ $$
 \int_{\mathbb R^d}
 \varphi(x)
 \left[
--\nabla\cdot(bp)+\kappa\Delta p
+-\nabla\cdot(bp)
++
+\frac12\sigma^2\Delta p
 \right](t,x)\,\mathrm dx.
-\tag{6.9}
+\tag{6.10}
 $$
 
 另一方面，
+
+$$
+\mathbb E[\varphi(Z_t)]
+\mathrel{=}
+\int_{\mathbb R^d}\varphi(x)p(t,x)\,\mathrm dx,
+$$
+
+所以
 
 $$
 \frac{\mathrm d}{\mathrm dt}
@@ -818,10 +1178,10 @@ $$
 \mathrel{=}
 \int_{\mathbb R^d}
 \varphi(x)\partial_t p(t,x)\,\mathrm dx.
-\tag{6.10}
+\tag{6.11}
 $$
 
-比较式 (6.9) 和式 (6.10)，得到 $p$ 满足的 Fokker--Planck 方程：
+比较式 (6.10) 和式 (6.11)。由于测试函数 $\varphi$ 可以任意选择，只能有
 
 $$
 \boxed{
@@ -829,79 +1189,233 @@ $$
 \mathrel{=}
 -\nabla\cdot(bp)
 +
-\kappa\Delta p.
-}
-\tag{6.11}
-$$
-
-代入 $b=u+\kappa s$：
-
-$$
-\boxed{
-\partial_t p
-\mathrel{=}
--\nabla\cdot\bigl((u+\kappa s)p\bigr)
-+
-\kappa\Delta p.
+\frac12\sigma^2\Delta p.
 }
 \tag{6.12}
 $$
 
-> **备注：Fokker--Planck 方程中的两项。**
+这就证明了本节开头给出的 Fokker--Planck 方程。
+
+> **补充：式 (6.7) 的二阶项从哪里来？**
 >
-> $-\nabla\cdot(bp)$ 描述漂移速度 $b$ 对密度的输运；$\kappa\Delta p$ 描述 Brownian 噪声对密度的扩散和平滑。ODE 的连续性方程只有第一项，SDE 因为不断注入噪声，所以多出第二项。
+> Itô 公式可以形式化地看成二阶 Taylor 展开：
 
-### 6.5 为什么漂移要选成 $u+\kappa s$
+$$
+\mathrm d\varphi(Z_t)
+\mathrel{=}
+\nabla\varphi(Z_t)\cdot\mathrm dZ_t
++
+\frac12
+(\mathrm dZ_t)^{\mathsf T}
+\nabla^2\varphi(Z_t)
+\mathrm dZ_t.
+$$
 
-如果直接写成
+> 代入 $\mathrm dZ_t=b\,\mathrm dt+\sigma\,\mathrm dW_t$，并使用
+
+$$
+(\mathrm dt)^2=0,
+\qquad
+\mathrm dt\,\mathrm dW_t=0,
+\qquad
+\mathrm dW_t\mathrm dW_t^{\mathsf T}
+\mathrel{=}
+\mathrm{Id}\,\mathrm dt,
+$$
+
+> 二阶项只剩
+
+$$
+\frac12\sigma^2(t)
+\operatorname{tr}(\nabla^2\varphi(Z_t))\,\mathrm dt
+\mathrel{=}
+\frac12\sigma^2(t)
+\Delta\varphi(Z_t)\,\mathrm dt.
+$$
+
+> 因此式 (6.7) 比普通链式法则多出一个正的二阶项。
+
+### 6.5 用 Fokker--Planck 方程设计漂移
+
+现在已经知道噪声会在密度方程中增加
+
+$$
+\frac12\sigma^2(t)\Delta p.
+$$
+
+这说明不能简单地在 ODE 上加噪声。若直接写成
 
 $$
 \mathrm dZ_t
 \mathrel{=}
 u(t,Z_t)\,\mathrm dt
 +
-\sqrt{2\kappa(t)}\,\mathrm dW_t,
+\sigma(t)\,\mathrm dW_t,
 $$
 
-那么密度方程会变成
+那么其密度满足
 
 $$
 \partial_t p
 \mathrel{=}
 -\nabla\cdot(up)
 +
-\kappa\Delta p.
+\frac12\sigma^2\Delta p,
 $$
 
-多出的 $\kappa\Delta p$ 会改变原来的概率路径，因此不能只在 ODE 上直接加噪声。
+比目标连续性方程多出扩散项，通常会改变原来的密度路径。
 
-为了抵消这个扩散效果，漂移中加入 $\kappa s$。由 score 的定义，
-
-$$
-\begin{aligned}
-\rho s
-&=
-\rho\nabla\log\rho
-\\
-&=
-\rho\frac{\nabla\rho}{\rho}
-\\
-&=
-\nabla\rho.
-\end{aligned}
-\tag{6.13}
-$$
-
-因此
+从这里开始，为了简化公式，定义扩散率
 
 $$
 \boxed{
-\nabla\cdot(\rho s)=\Delta\rho.
+\kappa(t)
+:=
+\frac{\sigma^2(t)}{2}
+\ge0,
+\qquad
+\sigma(t)=\sqrt{2\kappa(t)}.
+}
+$$
+
+于是 Fokker--Planck 方程写成
+
+$$
+\partial_t p
+\mathrel{=}
+-\nabla\cdot(bp)
++
+\kappa\Delta p.
+$$
+
+因为 $\kappa$ 只依赖时间，
+
+$$
+\kappa\Delta p
+\mathrel{=}
+\nabla\cdot(\kappa\nabla p).
+$$
+
+所以方程可以改写为概率质量守恒形式
+
+$$
+\partial_t p+\nabla\cdot J_p=0,
+\qquad
+J_p
+\mathrel{=}
+bp-\kappa\nabla p.
+$$
+
+这里：
+
+- $bp$ 是漂移流量；
+- $-\kappa\nabla p$ 是扩散流量。
+
+另一方面，目标密度 $\rho$ 已满足
+
+$$
+\partial_t\rho+\nabla\cdot(\rho u)=0,
+$$
+
+因此目标概率流量是 $\rho u$。
+
+若希望 SDE 在密度为 $\rho$ 时具有同样的总流量，一个直接的选择是令
+
+$$
+\boxed{
+b(t,x)\rho(t,x)
+\mathbin{-}
+\kappa(t)\nabla\rho(t,x)
+\mathrel{=}
+u(t,x)\rho(t,x).
+}
+\tag{6.13}
+$$
+
+利用 score 恒等式
+
+$$
+\frac{\nabla\rho}{\rho}
+\mathrel{=}
+\nabla\log\rho
+\mathrel{=}
+s,
+$$
+
+在 $\rho>0$ 的位置上将式 (6.13) 除以 $\rho$，得到
+
+$$
+\boxed{
+b(t,x)
+\mathrel{=}
+u(t,x)+\kappa(t)s(t,x).
 }
 \tag{6.14}
 $$
 
-现在检查目标密度 $\rho$ 是否满足 SDE 的 Fokker--Planck 方程：
+这一步的物理意义很简单：
+
+$$
+\underbrace{\kappa\rho s}_{+\kappa\nabla\rho\text{，score 漂移流量}}
++
+\underbrace{(-\kappa\nabla\rho)}_{\text{扩散流量}}
+\mathrel{=}
+0.
+$$
+
+因此，score 漂移抵消扩散流量，最后只剩目标流量 $\rho u$。
+
+严格地说，只要额外概率流的散度为零就不会改变密度，所以漂移不绝对唯一。式 (6.14) 是最直接的逐点抵消选择。
+
+### 6.6 构造 SDE，并证明它的密度等于 $\rho$
+
+将式 (6.14) 和 $\sigma=\sqrt{2\kappa}$ 代回原 SDE，得到
+
+$$
+\boxed{
+\mathrm dZ_t
+\mathrel{=}
+\bigl(u+\kappa s\bigr)(t,Z_t)\,\mathrm dt
++
+\sqrt{2\kappa(t)}\,\mathrm dW_t,
+\qquad
+Z_0\sim\rho_0.
+}
+\tag{6.15}
+$$
+
+记该 SDE 的实际密度为 $p(t,x)$。下面分三步证明 $p=\rho$。
+
+**第一步：写出实际密度 $p$ 的方程。**
+
+由 Fokker--Planck 方程，
+
+$$
+\begin{cases}
+\partial_t p
+\mathrel{=}
+-\nabla\cdot\bigl((u+\kappa s)p\bigr)
++
+\kappa\Delta p,
+\\
+p(0,x)=\rho_0(x).
+\end{cases}
+$$
+
+**第二步：验证目标密度 $\rho$ 也满足同一个方程。**
+
+由式 (6.6)，
+
+$$
+\nabla\cdot(\rho s)
+\mathrel{=}
+\nabla\cdot(\nabla\rho)
+\mathrel{=}
+\Delta\rho.
+\tag{6.16}
+$$
+
+因此
 
 $$
 \begin{aligned}
@@ -924,48 +1438,25 @@ $$
 &\quad=
 \partial_t\rho.
 \end{aligned}
-\tag{6.15}
-$$
-
-最后一个等号使用了第 4 章已经证明的
-
-$$
-\partial_t\rho=-\nabla\cdot(u\rho).
-$$
-
-> **备注：把 $p=\rho$ 代入方程，是不是预先假设了结论？**
->
-> 不是。这里只是把 $\rho$ 当作一个候选函数，检查它是否满足 SDE 的密度方程。式 (6.15) 证明了“$\rho$ 确实是该方程的一个解”；下一步还需要相同初值和解的唯一性，才能推出 SDE 的实际密度 $p$ 就是 $\rho$。
-
-### 6.6 用相同方程、相同初值和唯一性证明 $p=\rho$
-
-SDE 实际密度 $p$ 满足
-
-$$
-\begin{cases}
-\partial_t p
-\mathrel{=}
--\nabla\cdot\bigl((u+\kappa s)p\bigr)
-+\kappa\Delta p,\\
-p(0,x)=\rho_0(x).
-\end{cases}
-\tag{6.16}
-$$
-
-式 (6.15) 证明目标密度 $\rho$ 也满足
-
-$$
-\begin{cases}
-\partial_t\rho
-\mathrel{=}
--\nabla\cdot\bigl((u+\kappa s)\rho\bigr)
-+\kappa\Delta\rho,\\
-\rho(0,x)=\rho_0(x).
-\end{cases}
 \tag{6.17}
 $$
 
-在漂移、score 和扩散系数具有适当正则性时，Fokker--Planck 初值问题的解唯一。因此
+最后一个等号使用了目标连续性方程
+
+$$
+\partial_t\rho=-\nabla\cdot(\rho u).
+$$
+
+这里没有预先假设 $p=\rho$。我们只是把已知的候选函数 $\rho$ 代入 $p$ 所满足的 PDE，检查它确实也是一个解。
+
+**第三步：使用相同初值和唯一性。**
+
+现在 $p$ 和 $\rho$：
+
+1. 满足同一个 Fokker--Planck 方程；
+2. 具有同一个初值 $\rho_0$。
+
+在 $u,s,\kappa$ 具有适当正则性、相应初值问题的解唯一时，
 
 $$
 \boxed{
@@ -980,34 +1471,30 @@ $$
 Z_1\sim p(1,\cdot)=\rho(1,\cdot)=\rho_1.
 $$
 
-这说明：从 $Z_0\sim\rho_0$ 出发运行 SDE，在理想速度场和 score 下，终点分布也是目标数据分布。
+因此，式 (6.15) 的单条轨迹虽然带有随机性，但它在每个时刻的理想边际密度仍然是预先设计的 $\rho(t)$。
 
-### 6.7 用“概率流量”再看一次抵消关系
+### 6.7 用概率流理解抵消机制
 
-Fokker--Planck 方程可以写成
+Fokker--Planck 方程可以写成概率质量守恒形式
 
 $$
 \partial_t p+\nabla\cdot J_p=0,
 $$
 
-其中 SDE 的总概率流量是
+其中
 
 $$
 \boxed{
 J_p
 \mathrel{=}
-bp-\kappa\nabla p.
+\underbrace{bp}_{\text{漂移流量}}
+\mathbin{-}
+\underbrace{\kappa\nabla p}_{\text{扩散流量的反向梯度形式}}.
 }
 \tag{6.19}
 $$
 
-它由两部分组成：
-
-$$
-\underbrace{bp}_{\text{漂移流量}}
-\quad+
-\underbrace{(-\kappa\nabla p)}_{\text{扩散流量}}.
-$$
+更准确地说，扩散流量本身是 $-\kappa\nabla p$：它从高密度处流向低密度处。
 
 当 $p=\rho$ 且 $b=u+\kappa s$ 时，
 
@@ -1018,7 +1505,11 @@ J_\rho
 (u+\kappa s)\rho-\kappa\nabla\rho
 \\
 &=
-u\rho+\kappa\rho s-\kappa\nabla\rho
+u\rho
++
+\underbrace{\kappa\rho s}_{\kappa\nabla\rho}
+\mathbin{-}
+\kappa\nabla\rho
 \\
 &=
 u\rho.
@@ -1026,25 +1517,51 @@ u\rho.
 \tag{6.20}
 $$
 
-因为 $\rho s=\nabla\rho$，所以额外漂移流量 $\kappa\rho s$ 和扩散流量 $-\kappa\nabla\rho$ 恰好抵消。最后剩下的总流量仍然是
+因此三种作用可以这样理解：
+
+| 作用 | 概率流量 | 物理效果 |
+|---|---|---|
+| 原始速度场 | $\rho u$ | 沿目标路径输运概率质量 |
+| score 补偿漂移 | $+\kappa\nabla\rho$ | 从低密度方向推回高密度方向 |
+| 布朗扩散 | $-\kappa\nabla\rho$ | 从高密度区域摊向低密度区域 |
+
+后两项逐点抵消，所以 SDE 的总概率流仍然是 $\rho u$。这就是 ODE 和 SDE 可以拥有相同单时刻边际密度的最直观原因。
+
+$\kappa$ 可以看成轨迹随机性的旋钮：
+
+- $\kappa(t)=0$ 时，式 (6.15) 退化为概率流 ODE；
+- $\kappa(t)>0$ 时，单条轨迹具有随机性，但理想边际仍然是 $\rho(t)$；
+- 不同的非负函数 $\kappa(t)$ 给出不同的随机轨迹族，却可以共享同一条边际密度路径。
+
+### 6.8 前向 SDE、反向 SDE 与 ODE
+
+沿 $t:0\to1$ 运行的前向 SDE 是
 
 $$
-\boxed{J_\rho=\rho u.}
+\mathrm dZ_t
+\mathrel{=}
+\bigl(u+\kappa s\bigr)(t,Z_t)\,\mathrm dt
++
+\sqrt{2\kappa(t)}\,\mathrm dW_t.
 $$
 
-这是“ODE 和 SDE 可以共享同一边际密度路径”最直观的原因。
+它在时刻 $t$ 的 score 正是 $s(t,x)=\nabla\log\rho(t,x)$。对扩散系数 $\sqrt{2\kappa}$，反向时间漂移等于
 
-### 6.8 ODE、前向 SDE 与反向 SDE
+$$
+\begin{aligned}
+b_{\mathrm{rev}}
+&=
+b_{\mathrm{fwd}}-2\kappa s
+\\
+&=
+(u+\kappa s)-2\kappa s
+\\
+&=
+u-\kappa s.
+\end{aligned}
+$$
 
-| 动力学 | 方程 | 单条轨迹 | 理想边际密度 |
-|---|---|---|---|
-| 概率流 ODE | $\mathrm dX_t=u(t,X_t)\,\mathrm dt$ | 给定初值后确定 | $\rho(t)$ |
-| 前向 SDE | $\mathrm dZ_t=(u+\kappa s)(t,Z_t)\,\mathrm dt+\sqrt{2\kappa(t)}\,\mathrm dW_t$ | 随机 | $\rho(t)$ |
-
-- 当 $\kappa(t)=0$ 时，前向 SDE 退化为概率流 ODE。
-- 当 $\kappa(t)>0$ 时，单样本轨迹带有随机性，但理想边际仍然是 $\rho(t)$。
-
-与前向 SDE 相对应的反向时间 SDE 为
+因此，若仍使用变量 $t$，但从 $t=1$ 向 $t=0$ 积分，反向 SDE 写成
 
 $$
 \boxed{
@@ -1054,30 +1571,60 @@ $$
 +
 \sqrt{2\kappa(t)}\,\mathrm d\overline W_t,
 \qquad
-\mathrm dt<0.
+t:1\longrightarrow0.
 }
 \tag{6.21}
 $$
 
-其中：
+这里 $\overline W_t$ 表示反向时间 Wiener 过程。式 (6.21) 中的时间步 $\mathrm dt$ 为负；不能把它当作沿正时间方向运行的普通 SDE。
 
-- $\overline W_t$ 表示反向时间 Wiener 过程；
-- 方程从 $t=1$ 向 $t=0$ 积分；
-- 在理想 score 下，它沿相反时间方向经过同一组边际 $\rho(t)$。
+如果希望始终使用递增时间，可以定义反向时钟
 
-需要再次强调：
+$$
+\tau=1-t,
+\qquad
+\widetilde Z_\tau=Z_{1-\tau}.
+$$
+
+那么 $\tau:0\to1$，相应方程为
+
+$$
+\mathrm d\widetilde Z_\tau
+\mathrel{=}
+\left[
+-u+\kappa s
+\right](1-\tau,\widetilde Z_\tau)\,\mathrm d\tau
++
+\sqrt{2\kappa(1-\tau)}\,\mathrm d\widetilde W_\tau.
+$$
+
+总结如下：
+
+| 动力学 | 运行方向 | 漂移 | 单条轨迹 | 理想边际 |
+|---|---|---|---|---|
+| 概率流 ODE | $0\to1$ | $u$ | 给定初值后确定 | $\rho(t)$ |
+| 前向 SDE | $0\to1$ | $u+\kappa s$ | 随机 | $\rho(t)$ |
+| 反向 SDE | $1\to0$ | $u-\kappa s$，配合负的 $\mathrm dt$ | 随机 | 反向经过同一组 $\rho(t)$ |
+
+需要强调的是：
 
 $$
 \boxed{
-\text{ODE 轨迹、前向 SDE 轨迹和反向 SDE 轨迹通常不同；相同的是每个时刻的边际密度。}
+\text{三种动力学的单条轨迹通常不同；相同的是相应时刻的边际密度。}
 }
 $$
 
-![同一边际概率路径的 ODE 与 SDE 实现](assets/unified-diffusion/stochastic-interpolant-ode-sde.png)
+本章的核心结论可以压缩为
 
-*图 1：ODE 与 SDE 的单样本轨迹不同，但可以共享同一条边际密度路径。图源：Albergo、Boffi、Vanden-Eijnden，Stochastic Interpolants, Figure 1。*
-
----
+$$
+\boxed{
+\text{布朗扩散}
++
+\text{score 漂移补偿}
+\mathrel{=}
+\text{不改变目标边际概率流}.
+}
+$$
 
 ## 7. 平方回归：为什么随机标签可以学习出确定速度场
 
