@@ -1516,6 +1516,29 @@ score 是一个 $d$ 维向量。它的物理含义是：
 - 大小：表示附近密度变化得有多快；
 - 在密度的局部峰顶，score 为零。
 
+> **备注：为什么 score 不是速度？**
+>
+> 二者分别对不同变量求导：
+
+$$
+s(t,x)
+\mathrel{=}
+\nabla_x\log\rho(t,x)
+\qquad\text{是对空间位置 }x\text{ 求导},
+$$
+
+> 而
+
+$$
+u(t,x)
+\qquad\text{描述}\qquad
+\frac{\mathrm dX_t}{\mathrm dt}
+\mathrel{=}
+u(t,X_t),
+$$
+
+> 是样本对时间的变化率。score 只说明“往哪个空间方向密度会升高”，并没有规定样本必须沿该方向移动。
+
 由链式法则，
 
 $$
@@ -2681,77 +2704,86 @@ p_{\mathrm{data}}(y_0)p_\tau(y\mid y_0)
 $$
 
 >
-> 关键是认出权重 $(*)$。由 Bayes 公式，
+> 为了把这个分式说清楚，下面用 $x$ 表示 $y_0$ 的一个可能取值，并简记
 
 $$
-\boxed{
-p(y_0\mid y_\tau=y)
-\mathrel{=}
-\frac{
-p_{\mathrm{data}}(y_0)p_\tau(y\mid y_0)
-}{
-\rho(\tau,y)
-}.
-}
+q_\tau(y\mid x)
+:=
+p_\tau(y\mid y_0=x),
+\qquad
+p_0(x):=p_{\mathrm{data}}(x).
 $$
 
-> 这里的三项分别是
+> 于是上式中的分式写成
 
 $$
-\underbrace{p_{\mathrm{data}}(y_0)}_{来源的先验密度}
-\quad
-\underbrace{p_\tau(y\mid y_0)}_{该来源产生当前 y 的可能性}
-\quad
-\underbrace{\rho(\tau,y)}_{归一化常数}.
+\frac{q_\tau(y\mid x)p_0(x)}{\rho(\tau,y)}.
 $$
 
-> 所以 $(*)$ 就是：已经观察到 $y_\tau=y$ 以后，干净来源为 $y_0$ 的后验密度。它对 $y_0$ 的积分为 $1$：
-
-$$
-\int
-\frac{
-p_{\mathrm{data}}(y_0)p_\tau(y\mid y_0)
-}{
-\rho(\tau,y)
-}
-\,\mathrm dy_0
-=1.
-$$
-
+> 它不是一个普通的权重，而是“已经观察到 $y_\tau=y$ 后，$y_0=x$ 的条件概率密度”。
 >
-> 代回上式，得到
+> 根据 Bayes 公式，
 
 $$
 \begin{aligned}
-\nabla_y\log\rho(\tau,y)
+p(y_0=x\mid y_\tau=y)
 &=
-\int
-p(y_0\mid y_\tau=y)
-\nabla_y\log p_\tau(y\mid y_0)
-\,\mathrm dy_0
+\frac{
+p(y_\tau=y\mid y_0=x)p_0(x)
+}{
+p(y_\tau=y)
+}
 \\
 &=
+\frac{q_\tau(y\mid x)p_0(x)}
+{\rho(\tau,y)}.
+\end{aligned}
+$$
+
+> 而连续随机变量的条件期望定义为
+
+$$
+\mathbb E[f(y_0,y_\tau)\mid y_\tau=y]
+\mathrel{=}
+\int
+f(x,y)\,
+p(y_0=x\mid y_\tau=y)
+\,\mathrm dx.
+$$
+
+> 取
+
+$$
+f(x,y)
+\mathrel{=}
+\nabla_y\log q_\tau(y\mid x),
+$$
+
+> 就得到
+
+$$
+\begin{aligned}
+&\int
+\nabla_y\log q_\tau(y\mid x)
+\frac{q_\tau(y\mid x)p_0(x)}
+{\rho(\tau,y)}
+\,\mathrm dx
+\\
+&\quad=
+\int
+\nabla_y\log q_\tau(y\mid x)
+p(y_0=x\mid y_\tau=y)
+\,\mathrm dx
+\\
+&\quad=
 \mathbb E\!\left[
-\nabla_y\log p_\tau(y\mid y_0)
-\,\middle|\,
-y_\tau=y
+\nabla_y\log q_\tau(y_\tau\mid y_0)
+\mid y_\tau=y
 \right].
 \end{aligned}
 $$
 
-> 最后一个等号只是条件期望的定义：用条件密度 $p(y_0\mid y_\tau=y)$ 对函数 $\nabla_y\log p_\tau(y\mid y_0)$ 做加权积分。
->
-> 如果 $y_0$ 只有两种可能来源，观察到 $y$ 后它们的后验概率分别是 $q_1(y)$ 和 $q_2(y)$，那么上式就是
-
-$$
-\nabla_y\log\rho(\tau,y)
-\mathrel{=}
-q_1(y)s_1(y)+q_2(y)s_2(y),
-\qquad
-q_1(y)+q_2(y)=1.
-$$
-
-> 它不是等权平均：哪个来源更有可能生成当前位置 $y$，它的 score 权重就更大。
+> 最后一行写 $q_\tau(y_\tau\mid y_0)$，是因为条件期望括号里先写随机变量形式；一旦条件指定 $y_\tau=y$，它就变成 $q_\tau(y\mid y_0)$。
 >
 > 在条件 $y_\tau=y$ 下，插值公式还给出
 
@@ -2890,6 +2922,90 @@ B(\tau)
 \tag{9.3}
 $$
 
+> **例子：一维线性加噪。**
+>
+> 取
+
+$$
+a(\tau)=1-\tau,
+\qquad
+\sigma(\tau)=\tau.
+$$
+
+> 插值就是
+
+$$
+y_\tau
+\mathrel{=}
+(1-\tau)y_0+\tau\varepsilon,
+$$
+
+> 随机速度标签为
+
+$$
+Y_\tau
+\mathrel{=}
+\varepsilon-y_0.
+$$
+
+> 现在取 $\tau=\tfrac12$，并观察到 $y_\tau=1$。假设噪声预测器给出的条件平均噪声是
+
+$$
+\eta\left(\tfrac12,1\right)=0.2.
+$$
+
+> 这表示：在所有能够产生当前位置 $y_\tau=1$ 的样本中，$\varepsilon$ 的平均值是 $0.2$。
+>
+> 先由
+
+$$
+1
+\mathrel{=}
+\frac12y_0+\frac12\varepsilon
+$$
+
+> 计算对应的条件平均数据端点：
+
+$$
+\mathbb E[y_0\mid y_\tau=1]
+\mathrel{=}
+\frac{1-\frac12\times0.2}{\frac12}
+\mathrel{=}
+1.8.
+$$
+
+> 因为 $Y_\tau=\varepsilon-y_0$，所以条件平均速度是
+
+$$
+u\left(\tfrac12,1\right)
+\mathrel{=}
+0.2-1.8
+\mathrel{=}
+-1.6.
+$$
+
+> 同一个噪声预测还能换算成 score：
+
+$$
+s_{1/2}(1)
+\mathrel{=}
+-\frac{0.2}{1/2}
+\mathrel{=}
+-0.4.
+$$
+
+> 因此，同一个条件平均噪声 $0.2$ 同时确定了
+
+$$
+\boxed{
+\text{噪声预测 }0.2,
+\qquad
+\text{速度预测 }-1.6,
+\qquad
+\text{score 预测 }-0.4.
+}
+$$
+
 #### 三者的相互转换
 
 在理想预测下，噪声网络输出满足
@@ -2972,130 +3088,39 @@ $$
 
 ---
 
-## 10. 随机分支：反向 VP SDE 与 DDPM
+## 10. 随机分支：VP SDE 与离散 DDPM
 
-第 9 章规定了高斯边际路径和噪声、score、速度之间的转换关系。本章沿随机分支顺序回答三个问题：
-
-1. 怎样用前向 VP 过程将数据变成噪声；
-2. 怎样用反向 VP SDE 在连续时间中随机生成；
-3. 怎样把它写成离散 DDPM 反向链。
-
-这条主线是
+第 9 章的式 (9.1) 给出一般高斯加噪路径。本章只选择其中满足“方差保持”条件的一类路径，并说明它的连续形式与离散形式：
 
 $$
 \boxed{
-\begin{array}{ccc}
-&\text{VP 前向加噪}&\\[1mm]
-&\Downarrow&\\
-&\text{反向 VP SDE：在连续时间中由布朗噪声驱动}&\\
-&\Downarrow\ \text{放到有限时间网格上}&\\
-&\text{DDPM：每个离散反向步重新采样高斯噪声}&
-\end{array}
+\text{连续时间：VP SDE}
+\qquad\longleftrightarrow\qquad
+\text{离散时间：DDPM}
 }
 $$
 
-### 10.1 从离散加噪直觉到前向 VP SDE
+VP SDE 的全称是 **Variance Preserving Stochastic Differential Equation**，中文通常译为**方差保持随机微分方程**。DDPM 的全称是 **Denoising Diffusion Probabilistic Model**，中文通常译为**去噪扩散概率模型**。二者描述的是同一类逐渐加噪的扩散过程：VP SDE 使用连续时间，DDPM 使用有限个离散时间步。
 
-第 9 章已经用 $y_\tau$ 表示扩散变量，因此本节继续沿用这个记号。我们的目标是：从式 (9.1) 的一般高斯边际路径出发，设计一种在加噪过程中保持总方差的随机动力学。这就是 variance preserving（VP）的含义。
+### 10.1 从式 (9.1) 得到前向 VP SDE
 
-先看离散形式，因为“方差保持”在一步更新中最直观。取时间网格
-
-$$
-0=\tau_0<\tau_1<\cdots<\tau_K=T,
-\qquad
-\Delta\tau_k:=\tau_k-\tau_{k-1},
-$$
-
-设 $\beta(\tau)\geq0$ 表示单位时间的加噪速率，定义第 $k$ 个时间区间的信号保留比例
+第 9 章的一般高斯路径为
 
 $$
-\alpha_k
-:=
-\exp\left(
--\int_{\tau_{k-1}}^{\tau_k}\beta(r)\,\mathrm dr
-\right),
-\qquad
-0<\alpha_k\leq1.
-$$
-
-一步加噪写成
-
-$$
-\boxed{
-y_k
-\mathrel{=}
-\sqrt{\alpha_k}\,y_{k-1}
-\mathbin{+}
-\sqrt{1-\alpha_k}\,\varepsilon_k,
-\qquad
-\varepsilon_k\sim\mathcal N(0,\mathrm{Id}),
-}
-$$
-
-其中 $y_k:=y_{\tau_k}$，各步 $\varepsilon_k$ 相互独立。每一步把原信号的方差乘上 $\alpha_k$，再补入方差 $1-\alpha_k$ 的高斯噪声。若 $y_{k-1}$ 的每个分量已标准化为方差 $1$，则 $y_k$ 的方差仍为
-
-$$
-\alpha_k\cdot1+(1-\alpha_k)\cdot1=1.
-$$
-
-这就是离散时间的“方差保持”。反复代入上式，从 $y_0$ 到 $y_k$ 的累计信号保留比例为
-
-$$
-\bar\alpha_k
-:=
-\prod_{j=1}^k\alpha_j
-\mathrel{=}
-\exp\left(
--\int_0^{\tau_k}\beta(r)\,\mathrm dr
-\right),
-$$
-
-所以固定第 $k$ 个时刻时，多步噪声的线性组合仍是高斯噪声，从而
-
-$$
-y_k
+y_\tau
 \overset{\mathrm d}{=}
-\sqrt{\bar\alpha_k}\,y_0
-\mathbin{+}
-\sqrt{1-\bar\alpha_k}\,\varepsilon,
+a(\tau)y_0+\sigma(\tau)\varepsilon,
 \qquad
 \varepsilon\sim\mathcal N(0,\mathrm{Id}).
 $$
 
-这已经是式 (9.1) 的离散 VP 版本，对应 $a_k^2+\sigma_k^2=\bar\alpha_k+(1-\bar\alpha_k)=1$。
-
-下面再把它变成连续时间公式。当 $\Delta\tau_k$ 很小时，上面对 $\alpha_k$ 的精确定义给出一阶近似
+VP 路径进一步要求
 
 $$
-\alpha_k
-\approx
-1-\beta(\tau_{k-1})\Delta\tau_k.
+a^2(\tau)+\sigma^2(\tau)=1.
 $$
 
-于是
-
-$$
-\sqrt{\alpha_k}
-\approx
-1-\frac12\beta(\tau_{k-1})\Delta\tau_k,
-\qquad
-\sqrt{1-\alpha_k}
-\approx
-\sqrt{\beta(\tau_{k-1})}\sqrt{\Delta\tau_k}.
-$$
-
-把这两个近似代回离散更新，得到
-
-$$
-y_k-y_{k-1}
-\approx
--\frac12\beta(\tau_{k-1})y_{k-1}\Delta\tau_k
-\mathbin{+}
-\sqrt{\beta(\tau_{k-1})}\,
-\underbrace{\sqrt{\Delta\tau_k}\varepsilon_k}_{\Delta W_k}.
-$$
-
-当网格不断加密时，$\Delta W_k$ 变成布朗运动增量 $\mathrm dW_\tau$，上式的连续极限就是前向 VP SDE：
+设 $\beta(\tau)\geq0$ 表示时刻 $\tau$ 的加噪速率。前向 VP SDE 定义为
 
 $$
 \boxed{
@@ -3110,88 +3135,94 @@ $$
 \tag{10.1}
 $$
 
-其中 $y_0\sim p_{\mathrm{data}}$。将前面只在网格点上定义的累计信号保留比例扩展到任意连续时刻，得到
+其中：
+
+- $-\tfrac12\beta(\tau)y_\tau\,\mathrm d\tau$ 是漂移项，使原有信号逐渐衰减；
+- $\sqrt{\beta(\tau)}\,\mathrm dW_\tau$ 是扩散项，不断加入高斯噪声；
+- $W_\tau$ 是第 6.2 节定义的标准布朗运动。
+
+式 (10.1) 在每个固定时刻仍对应式 (9.1) 的高斯加噪形式，其中信号系数 $a(\tau)$ 逐渐减小，噪声系数 $\sigma(\tau)$ 逐渐增大。若数据已经标准化为每个分量的方差约为 $1$，那么信号方差与噪声方差之和仍约为 $1$，这就是“variance preserving”的含义。当加噪时间足够长时，$a(T)\approx0$、$\sigma(T)\approx1$，所以 $y_T$ 近似服从标准高斯分布。式 (10.1) 因而描述了从数据到噪声的连续前向过程。
+
+### 10.2 将 VP 过程离散为 DDPM
+
+取时间网格
+
+$$
+0=\tau_0<\tau_1<\cdots<\tau_K=T,
+\qquad
+\Delta\tau_k:=\tau_k-\tau_{k-1},
+\qquad
+y_k:=y_{\tau_k}.
+$$
+
+在第 $k$ 步选择噪声强度 $\beta_k\in(0,1)$，并定义
+
+$$
+\alpha_k:=1-\beta_k.
+$$
+
+DDPM 的一步前向加噪为
 
 $$
 \boxed{
-\bar\alpha(\tau)
-:=
-\exp\left(
--\int_0^\tau\beta(r)\,\mathrm dr
-\right).
+y_k
+\mathrel{=}
+\sqrt{\alpha_k}\,y_{k-1}
+\mathbin{+}
+\sqrt{\beta_k}\,\varepsilon_k,
+\qquad
+\varepsilon_k\sim\mathcal N(0,\mathrm{Id}),
 }
 \tag{10.2}
 $$
 
-它满足 $\bar\alpha_k=\bar\alpha(\tau_k)$，因此式 (10.2) 就是离散累乘的连续写法，不是额外假设。固定时刻的条件边际为
+其中各步的 $\varepsilon_k$ 相互独立。$\alpha_k$ 表示经过第 $k$ 步后保留下来的信号方差比例，$\beta_k=1-\alpha_k$ 表示该步加入的噪声方差。对于足够小的时间步，二者与连续 VP SDE 中的加噪速率近似满足
+
+$$
+\beta_k
+\approx
+\beta(\tau_{k-1})\Delta\tau_k,
+$$
+
+所以式 (10.2) 是前向 VP SDE (10.1) 的离散形式。
+
+连续经过前 $k$ 步后，原始信号的方差保留比例是每一步保留比例的乘积。定义
 
 $$
 \boxed{
-y_\tau
-\overset{\mathrm d}{=}
-\sqrt{\bar\alpha(\tau)}y_0
-\mathbin{+}
-\sqrt{1-\bar\alpha(\tau)}\varepsilon,
-\qquad
-\varepsilon\sim\mathcal N(0,\mathrm{Id}).
+\bar\alpha_k
+:=
+\prod_{j=1}^k\alpha_j.
 }
 \tag{10.3}
 $$
 
-这恰好实现式 (9.1)，其中
-
-$$
-a(\tau)=\sqrt{\bar\alpha(\tau)},
-\qquad
-\sigma(\tau)=\sqrt{1-\bar\alpha(\tau)}.
-$$
-
-> **备注：边际相同不代表轨迹相同。**
->
-> 式 (10.3) 可以用一个 $\varepsilon$ 直接采样固定时刻的 $y_\tau$。真实 VP SDE 轨迹则由连续布朗增量产生，并不会在所有时刻复用同一个 $\varepsilon$。二者相同的是单时刻条件边际，不是整条轨迹。
-
-当 $\int_0^T\beta(r)\,\mathrm dr$ 足够大时，$\bar\alpha(T)$ 接近 $0$，因而 $y_T$ 接近标准高斯噪声。这完成了数据到噪声的前向过程。
-
-### 10.2 连续随机生成：反向 VP SDE
-
-生成时从 $y_T$ 出发，沿 $\tau:T\to0$ 返回数据端。记当前边际密度的 score 为
-
-$$
-s_\tau(y)
-:=
-\nabla_y\log\rho(\tau,y).
-$$
-
-由第 6.7 节的反向时间公式，得到
+反复使用式 (10.2)，可以直接得到第 $k$ 个时刻相对于初始数据的边际采样公式：
 
 $$
 \boxed{
-\mathrm dy_\tau
-\mathrel{=}
-\left[
--\frac12\beta(\tau)y_\tau
-\mathbin{-}
-\beta(\tau)s_\tau(y_\tau)
-\right]\mathrm d\tau
+y_k
+\overset{\mathrm d}{=}
+\sqrt{\bar\alpha_k}\,y_0
 \mathbin{+}
-\sqrt{\beta(\tau)}\,\mathrm d\overline W_\tau,
-\quad
-\tau:T\longrightarrow0.
+\sqrt{1-\bar\alpha_k}\,\varepsilon,
+\qquad
+\varepsilon\sim\mathcal N(0,\mathrm{Id}).
 }
 \tag{10.4}
 $$
 
-它在生成的每一步仍会注入新噪声。实际计算时，用式 (9.5) 中由噪声预测器换算得到的 $s_\theta$ 代替真实 score。下面把这些共同量放到有限时间网格上，得到 DDPM。
-
-### 10.3 噪声预测器提供反向信息
-
-第 10.1 节已经定义了时间网格、$\alpha_k$、$\bar\alpha_k$ 以及一步前向加噪，这里不再重复。为了与常见 DDPM 记号一致，只新引入一个简写：
+式 (10.4) 正是第 9 章的高斯加噪公式 (9.1) 在离散时刻的具体形式，其中
 
 $$
-\beta_k:=1-\alpha_k.
+a_k=\sqrt{\bar\alpha_k},
+\qquad
+\sigma_k=\sqrt{1-\bar\alpha_k}.
 $$
 
-训练时，随机采样网格时刻 $k$、数据 $y_0$ 和噪声 $\varepsilon$，然后直接用式 (10.3) 在 $\tau=\tau_k$ 处构造 $y_k$。这不需要从 $y_0$ 逐步加噪到 $y_k$。训练目标是
+因此，训练时可以随机选择 $k$，再用一个高斯噪声 $\varepsilon$ 直接构造 $y_k$，不需要从 $y_0$ 开始逐步执行 $k$ 次加噪。
+
+常见的 DDPM 噪声预测目标为
 
 $$
 \boxed{
@@ -3205,7 +3236,7 @@ $$
 \tag{10.5}
 $$
 
-这只是第 9.2 节噪声平方回归在离散网格上的写法，不是新的训练原理。由式 (9.5)，它同时给出近似 score
+这只是第 9.2 节噪声预测在离散网格上的写法。由式 (9.5)，它同时给出近似 score
 
 $$
 s_\theta(y_k,k)
@@ -3229,11 +3260,15 @@ y_k-\sqrt{1-\bar\alpha_k}\varepsilon_\theta(y_k,k)
 \tag{10.6}
 $$
 
-DDPM 和 DDIM 都使用这个噪声预测器，也都可以使用式 (10.6) 的 $\widehat y_0$。两者的区别不在训练，而在下一步如何更新样本。
+DDPM 和 DDIM 都可以使用这个噪声预测器，也都可以使用式 (10.6) 的 $\widehat y_0$。两者的区别不在这里，而在生成时如何从 $y_k$ 更新到 $y_{k-1}$。
 
-### 10.4 离散随机生成：DDPM 反向更新
+### 10.3 离散随机生成：DDPM 反向更新
 
-第 10.1 节的前向过程是线性高斯马尔可夫链。因此，给定 $y_k$ 和真实 $y_0$ 时，$y_{k-1}$ 的一步后验仍是高斯分布：
+式 (10.2) 描述的是从数据到噪声的前向链，而生成需要从噪声 $y_K$ 返回数据 $y_0$。第 6.7 节已经说明：随机扩散过程不能仅靠把时间步改成负数来反向运行，反向过程还需要 score 提供的密度信息。
+
+在离散 DDPM 中，这些信息由噪声预测器 $\varepsilon_\theta$ 提供；根据式 (9.5)，噪声预测与 score 预测可以相互转换。下面直接利用前向链的高斯结构构造离散反向更新，不再单独写出连续的反向 VP SDE。
+
+式 (10.2) 定义的 DDPM 前向过程是线性高斯马尔可夫链。因此，给定 $y_k$ 和真实 $y_0$ 时，$y_{k-1}$ 的一步后验仍是高斯分布：
 
 $$
 q_{\mathrm{fwd}}(y_{k-1}\mid y_k,y_0)
@@ -3304,13 +3339,13 @@ y_{k-1}
 \tag{10.11}
 $$
 
-这就是 DDPM 的随机反向采样。每一步都重新采样 $\xi_k$，因此即使初始 $y_K$ 相同，生成轨迹也可以不同。这与第 10.2 节反向 VP SDE 的随机性一致；当时间网格逐渐加密时，DDPM 反向链与反向 VP SDE 建立连续极限下的对应。
+这就是 DDPM 的随机反向采样。每一步都重新采样 $\xi_k$，因此即使初始 $y_K$ 相同，生成轨迹也可以不同。它是第 6.7 节所述随机反向生成思想的离散实现；当时间网格逐渐加密时，DDPM 反向链与反向 VP SDE 建立连续极限下的对应。
 
 ---
 
 ## 11. 确定性分支：VP 概率流 ODE 与 DDIM
 
-第 10.1 节的 VP 前向过程已经规定了 $\bar\alpha(\tau)$ 和各时刻高斯边际；第 10.3 节的噪声预测器也不需要重新训练。本章只改变生成动力学，主线是
+第 10.1 节给出了连续 VP 前向过程，第 10.2 节又定义了离散的累计信号保留比例 $\bar\alpha_k$ 和噪声预测器。本章只改变生成动力学，主线是
 
 $$
 \boxed{
@@ -3339,19 +3374,17 @@ $$
 \tag{11.1}
 $$
 
-对 VP 路径
-
-$$
-a(\tau)=\sqrt{\bar\alpha(\tau)},
-\qquad
-\sigma(\tau)=\sqrt{1-\bar\alpha(\tau)},
-$$
-
-有
+由式 (10.1) 的漂移项以及 VP 条件 $a^2+\sigma^2=1$，有
 
 $$
 \frac{\dot a}{a}=-\frac12\beta,
 \qquad
+a^2+\sigma^2=1,
+$$
+
+因而
+
+$$
 \frac{\dot a}{a}\sigma^2-\sigma\dot\sigma
 \mathrel{=}
 -\frac12\beta.
@@ -3369,7 +3402,7 @@ $$
 
 正是式 (11.1) 的概率流 ODE 速度。生成时从 $y_T$ 出发，将这条 ODE 沿 $\tau:T\to0$ 积分。它不注入新噪声，因此给定 $y_T$ 后的连续轨迹是确定的。
 
-与式 (10.4) 的反向 VP SDE 相比，概率流 ODE 的 score 系数从 $-\beta$ 变为 $-\tfrac12\beta$，同时去掉了布朗噪声项。两者使用同一个 score，理想情形下经过同一组单时刻边际密度，但单条轨迹不同。
+概率流 ODE 不含布朗噪声，因此是确定性过程；将第 6.7 节的反向 SDE 结论应用于 VP 过程时，所得反向 VP SDE 则保留随机噪声。两者使用同一个 score，理想情形下经过同一组单时刻边际密度，但单条轨迹不同。
 
 ### 11.2 把概率流 ODE 换成噪声预测坐标
 
@@ -3383,7 +3416,7 @@ $$
 \mathbin{+}
 \frac12\beta(\tau)
 \frac{\varepsilon_\theta(y_\tau,\tau)}
-{\sqrt{1-\bar\alpha(\tau)}}.
+{\sigma(\tau)}.
 }
 \tag{11.2}
 $$
@@ -3393,17 +3426,14 @@ $$
 $$
 R_\tau
 :=
-\frac{y_\tau}{\sqrt{\bar\alpha(\tau)}},
+\frac{y_\tau}{a(\tau)},
 \qquad
 \lambda(\tau)
 :=
-\sqrt{
-\frac{1-\bar\alpha(\tau)}
-{\bar\alpha(\tau)}
-}.
+\frac{\sigma(\tau)}{a(\tau)}.
 $$
 
-由 $\bar\alpha'(\tau)=-\beta(\tau)\bar\alpha(\tau)$，式 (11.2) 可以等价地改写成
+由 $\dot a/a=-\beta/2$ 和 $a^2+\sigma^2=1$，式 (11.2) 可以等价地改写成
 
 $$
 \boxed{
@@ -3416,6 +3446,18 @@ $$
 也就是说，在 $(\lambda,R)$ 坐标下，概率流 ODE 的速度正好是网络预测的噪声。这一换元是从连续 ODE 过渡到 DDIM 更新的关键。
 
 ### 11.3 离散确定性生成：DDIM 更新
+
+在离散网格时刻 $\tau_k$，连续系数 $a(\tau)$、$\sigma(\tau)$ 与第 10.2 节的离散累计信号保留比例对应为
+
+$$
+\boxed{
+a(\tau_k)=\sqrt{\bar\alpha_k},
+\qquad
+\sigma(\tau_k)=\sqrt{1-\bar\alpha_k}.
+}
+$$
+
+因此，下面的离散变量正是第 11.2 节中连续变量在时间网格上的取值。
 
 在时刻 $k$，网络先预测
 
@@ -3498,39 +3540,7 @@ $$
 
 ---
 
-## 12. DDPM 与 DDIM：同一条路径的两种离散实现
-
-现在可以把第 9—11 章压缩成一条主线：
-
-$$
-\boxed{
-\begin{array}{c}
-\text{式 (2.1) 取高斯端点插值}
-\\
-\Downarrow
-\\
-y_\tau
-\mathrel{=}
-a(\tau)y_0+\sigma(\tau)\varepsilon
-\\
-\Downarrow
-\\
-\text{训练一次 }\varepsilon_\theta
-\\
-\swarrow\qquad\searrow
-\\
-\text{反向 VP SDE}
-\qquad
-\text{概率流 ODE}
-\\
-\Downarrow\qquad\Downarrow
-\\
-\text{离散 DDPM}
-\qquad
-\text{确定性 DDIM}
-\end{array}
-}
-$$
+## 12. DDPM 与 DDIM：共享同一前向边际与预测器的两种采样方式
 
 ### 12.1 相同与不同
 
@@ -3544,9 +3554,10 @@ $$
 
 所以，DDIM 通常不需要重新训练模型；它主要改变采样动力学和离散更新方式。
 
-### 12.2 DDIM 也可以保留部分随机性
-
-更一般的 DDIM 更新可以写成
+> **备注：DDIM 也可以保留部分随机性。**
+>
+> 更一般的 DDIM 更新可以写成
+>
 
 $$
 \boxed{
@@ -3566,7 +3577,9 @@ y_{k-1}
 \tag{12.1}
 $$
 
-其中
+>
+> 其中
+>
 
 $$
 \boxed{
@@ -3579,15 +3592,14 @@ $$
 \tag{12.2}
 $$
 
-- $\eta=0$：回到式 (11.3) 的确定性 DDIM；
-- $\eta=1$：使用常见 DDPM 的后验噪声尺度；
-- $0<\eta<1$：在确定性与随机性之间调节。
-
-因此 DDPM 与 DDIM 不是两套互不相干的训练方法。它们共享边际路径、训练样本和预测器，主要区别在于生成阶段采用怎样的连续动力学，以及怎样把它离散化。
+>
+> - $\eta=0$：回到式 (11.3) 的确定性 DDIM；
+> - $\eta=1$：使用常见 DDPM 的后验噪声尺度；
+> - $0<\eta<1$：在确定性与随机性之间调节。
 
 ![VP 前向路径、反向 SDE、概率流 ODE、DDPM 与 DDIM 的关系](assets/unified-diffusion/vp-sde-ode-ddpm-ddim-concept-map.png)
 
-*图 2：同一条 VP 前向加噪路径和同一个噪声预测器，可以连接到随机的反向 VP SDE 与离散 DDPM，也可以连接到确定性的 VP 概率流 ODE 与离散 DDIM。本图按本文的符号和逻辑重绘。*
+*图 2：同一组 VP 前向加噪边际和同一个噪声预测器，可以连接到随机的反向 VP SDE 与离散 DDPM，也可以连接到确定性的 VP 概率流 ODE 与离散 DDIM。本图按本文的符号和逻辑重绘。*
 
 ---
 
