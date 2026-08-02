@@ -2116,6 +2116,13 @@ $$
 \text{不改变目标边际概率流}.
 }
 $$
+
+![同一边际概率路径的 ODE 与 SDE 实现](assets/unified-diffusion/stochastic-interpolant-ode-sde.png)
+
+*图 1：左侧 ODE 的单条轨迹在给定初值后是确定的，右侧 SDE 的单条轨迹由布朗噪声驱动而不规则波动；两者在每个时刻却可以共享同一边际密度 $\rho(t)$。图源：Albergo、Boffi、Vanden-Eijnden，[*Stochastic Interpolants: A Unifying Framework for Flows and Diffusions*，Figure 1](https://arxiv.org/html/2303.08797v4#S1.F1)。*
+
+---
+
 ## 7. 平方回归：为什么随机标签可以学习出确定速度场
 
 ### 7.1 条件期望是平方损失的最优预测
@@ -3578,9 +3585,9 @@ $$
 
 因此 DDPM 与 DDIM 不是两套互不相干的训练方法。它们共享边际路径、训练样本和预测器，主要区别在于生成阶段采用怎样的连续动力学，以及怎样把它离散化。
 
-![DDPM、DDIM、反向 SDE 与概率流 ODE 的关系](assets/unified-diffusion/reverse-samplers-concept-map.png)
+![VP 前向路径、反向 SDE、概率流 ODE、DDPM 与 DDIM 的关系](assets/unified-diffusion/vp-sde-ode-ddpm-ddim-concept-map.png)
 
-*图 1：离散/连续与随机/确定性两个维度下的概念关系。图中使用原论文自己的符号和时间方向。图源：Nakkiran 等，Step-by-Step Diffusion, Figure 6。*
+*图 2：同一条 VP 前向加噪路径和同一个噪声预测器，可以连接到随机的反向 VP SDE 与离散 DDPM，也可以连接到确定性的 VP 概率流 ODE 与离散 DDIM。本图按本文的符号和逻辑重绘。*
 
 ---
 
