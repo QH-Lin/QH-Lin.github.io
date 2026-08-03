@@ -902,7 +902,7 @@ $$
 
 证明路线是：
 
-1. 先推导一般 SDE 的 Fokker--Planck 方程；
+1. 先推导本章采用的各向同性加性噪声 SDE 的 Fokker--Planck 方程；
 2. 再要求它在密度为 $\rho$ 时具有与 ODE 相同的概率流量 $\rho u$；
 3. 由此反推出合适的漂移；
 4. 最后用相同 PDE、相同初值和解的唯一性证明 $p=\rho$。
@@ -1023,60 +1023,7 @@ $$
 
 > **备注：什么是 Itô 型 SDE？**
 >
-> “Itô 型 SDE”指其中的随机积分按照 Itô 规则定义的随机微分方程。更一般的形式为
-
-$$
-\mathrm dZ_t
-\mathrel{=}
-b(t,Z_t)\,\mathrm dt
-\mathbin{+}
-\sigma(t,Z_t)\,\mathrm dW_t.
-$$
-
-> 它严格表示积分方程
-
-$$
-Z_t
-\mathrel{=}
-Z_0
-\mathbin{+}
-\int_0^t b(r,Z_r)\,\mathrm dr
-\mathbin{+}
-\int_0^t\sigma(r,Z_r)\,\mathrm dW_r.
-$$
-
-> 第一个积分是普通时间积分，最后一项按照 Itô 随机积分解释。
->
-> Itô 规则的核心是使用每个小区间的左端点。把 $[0,t]$ 分成小区间 $[t_k,t_{k+1}]$，则随机积分由下列和式的极限定义：
-
-$$
-\int_0^t\sigma(r,Z_r)\,\mathrm dW_r
-\approx
-\sum_k
-\sigma(t_k,Z_{t_k})
-\bigl(W_{t_{k+1}}-W_{t_k}\bigr).
-$$
-
-> 因此，在计算下一步的随机增量时，系数使用当前已经知道的状态 $Z_{t_k}$：
-
-$$
-Z_{t_{k+1}}-Z_{t_k}
-\approx
-b(t_k,Z_{t_k})\Delta t
-\mathbin{+}
-\sigma(t_k,Z_{t_k})\sqrt{\Delta t}\,\xi_k,
-\qquad
-\xi_k\sim\mathcal N(0,\mathrm{Id}).
-$$
-
-> 当前的系数不依赖尚未发生的未来布朗增量。正因为采用左端点，满足适当可积性条件时，Itô 随机积分具有零均值性质：
-
-$$
-\mathbb E\!\left[
-\int_0^t\sigma(r,Z_r)\,\mathrm dW_r
-\right]
-=0.
-$$
+> Itô SDE 使用当前时刻的状态计算下一小步的漂移和噪声系数。本文只考虑噪声幅度为 $\sigma(t)$ 的情形，其小时间步近似就是式 (6.3)。
 
 在一个很小但有限的时间步内，给定 $Z_t=x$，Euler--Maruyama 近似进行数值求解
 
@@ -1464,31 +1411,7 @@ $$
 
 > **备注：这个扩散项从哪里来？**
 >
-> 它来自布朗噪声在 Itô 公式中产生的二阶项。证明过程可以压缩成三步：
->
-> 1. Itô 公式中出现
-
-$$
-\frac12\sigma^2(t)\Delta\varphi(Z_t)\,\mathrm dt;
-$$
-
-> 2. 对轨迹取期望并按密度 $p$ 写成积分，得到
-
-$$
-\frac12\sigma^2(t)
-\int_{\mathbb R^d}(\Delta\varphi)p\,\mathrm dx;
-$$
-
-> 3. 对空间变量分部积分两次，把 $\Delta$ 从 $\varphi$ 转移到 $p$：
-
-$$
-\int_{\mathbb R^d}(\Delta\varphi)p\,\mathrm dx
-\mathrel{=}
-\int_{\mathbb R^d}\varphi\,\Delta p\,\mathrm dx.
-$$
-
->
-> 因此密度方程中最终出现
+> 布朗增量是 $\sqrt{\Delta t}$ 量级，它的平方是 $\Delta t$ 量级，因此二阶 Taylor 项不能忽略。对小时间步增量取期望后，这个二阶项给出 $\tfrac12\sigma^2(t)\Delta\varphi$；再通过两次分部积分把 $\Delta$ 从测试函数 $\varphi$ 转移到密度 $p$，最终在密度方程中得到
 
 $$
 \frac12\sigma^2(t)\Delta p.
