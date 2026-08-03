@@ -53,6 +53,34 @@ $$
 }
 $$
 
+> **备注：什么是“单时刻边际分布”？**
+>
+> 一个随机过程不仅包含某个时刻的随机变量，还包含整条随机轨迹：
+
+$$
+\{X_t:0\le t\le1\}.
+$$
+
+> 它的完整概率规律包括多个时刻之间的联合分布，例如
+
+$$
+(X_{0.2},X_{0.5},X_{0.8}).
+$$
+
+> 现在只固定一个时刻 $t$，不关心其他时刻，只看 $X_t$ 取不同值的概率，这就是时刻 $t$ 的边际分布：
+
+$$
+X_t\sim q(t,\cdot).
+$$
+
+> “边际”这个名字来自联合分布。例如已知两个时刻的联合密度 $p_{s,t}(x,y)$，把另一个时刻的变量 $x$ 积分消掉：
+
+$$
+p_t(y)=\int_{\mathbb R^d}p_{s,t}(x,y)\,\mathrm dx,
+$$
+
+> 得到的 $p_t$ 就是 $X_t$ 的边际密度。
+
 ---
 
 ## 1. 三个层次必须分开
@@ -349,6 +377,10 @@ $$
 ].
 \tag{4.1}
 $$
+
+> **备注：为什么可以交换时间求导与期望？**
+>
+> 直观上就是：**大量轨迹上观测值的平均变化速度，等于每条轨迹观测值变化速度的平均**。但依赖可微性和可积性条件；没有这些条件，求导与期望不一定能交换。
 
 对 $x_t$ 使用条件期望：
 
@@ -912,37 +944,29 @@ $$
 
 > **备注：为什么这两种写法等价？**
 >
-> 第一种写法来自标准布朗运动的定义：长度为 $\Delta t$ 的时间区间对应一个均值为零、协方差为 $\Delta t\,\mathrm{Id}$ 的高斯增量。
+> 先看一维情形。根据标准布朗运动的定义，长度为 $\Delta t$ 的时间区间对应的增量满足
+
+$$
+\Delta W_t\sim\mathcal N(0,\Delta t).
+$$
+
 >
-> 令 $\xi\sim\mathcal N(0,\mathrm{Id})$，并定义
+> 另取一个标准高斯随机变量 $\xi\sim\mathcal N(0,1)$，并定义
 
 $$
 Y:=\sqrt{\Delta t}\,\xi.
 $$
 
-> 高斯向量乘以常数后仍是高斯向量。它的均值为
+> 高斯随机变量乘以常数后仍是高斯随机变量。$Y$ 的均值和方差分别为
 
 $$
-\mathbb E[Y]
-\mathrel{=}
-\sqrt{\Delta t}\,\mathbb E[\xi]
-=0,
-$$
-
-> 协方差为
-
-$$
-\begin{aligned}
-\operatorname{Cov}(Y)
-&=
-\mathbb E[YY^{\mathsf T}]
-\\
-&=
-\Delta t\,\mathbb E[\xi\xi^{\mathsf T}]
-\\
-&=
-\Delta t\,\mathrm{Id}.
-\end{aligned}
+\mathbb E[Y]=\sqrt{\Delta t}\,\mathbb E[\xi]=0,
+\qquad
+\operatorname{Var}(Y)
+=\operatorname{Var}\!\left(\sqrt{\Delta t}\,\xi\right)
+=\left(\sqrt{\Delta t}\right)^2\operatorname{Var}(\xi)
+=\Delta t\,\operatorname{Var}(\xi)
+=\Delta t.
 $$
 
 > 因此
@@ -950,10 +974,10 @@ $$
 $$
 \sqrt{\Delta t}\,\xi
 \sim
-\mathcal N(0,\Delta t\,\mathrm{Id}),
+\mathcal N(0,\Delta t).
 $$
 
-> 与 $\Delta W_t$ 具有完全相同的分布，所以可以写成
+> 它与 $\Delta W_t$ 的分布完全相同，所以可以写成
 
 $$
 \Delta W_t
@@ -961,11 +985,11 @@ $$
 \sqrt{\Delta t}\,\xi.
 $$
 
-> 从坐标上看也一样：$\xi$ 的每个分量都是相互独立的 $\mathcal N(0,1)$；乘以 $\sqrt{\Delta t}$ 后，每个分量都变成 $\mathcal N(0,\Delta t)$。
+> $d$ 维情形就是将这个结论分别用到每个相互独立的坐标分量，因此协方差矩阵为 $\Delta t\,\mathrm{Id}$。
 >
-> 这也是数值模拟布朗运动的方法：每走一个长度为 $\Delta t$ 的时间步，就重新采样一个独立的标准高斯向量 $\xi$，再乘以 $\sqrt{\Delta t}$ 作为该步的布朗增量。
+> 这也是数值模拟布朗运动的方法：每走一个长度为 $\Delta t$ 的时间步，就重新采样一个独立的标准高斯随机变量，再乘以 $\sqrt{\Delta t}$ 作为该步的布朗增量。
 >
-> 需要注意，$\overset{\mathrm d}{=}$ 只表示两边的概率分布相同，不表示两个随机变量在每一次采样时都取到相同数值。它说明的是：可以用一个标准高斯向量 $\xi$ 生成一个与布朗增量同分布的样本。
+> 需要注意，$\overset{\mathrm d}{=}$ 只表示两边的概率分布相同，不表示两个随机变量在每一次采样时都取到相同数值。
 
 因此布朗增量是 $\sqrt{\Delta t}$ 量级，而不是 $\Delta t$ 量级。符号 $\mathrm dW_t$ 是布朗增量的连续时间记号，不能理解成 $\dot W_t\,\mathrm dt$，因为布朗轨迹几乎处处不可微。
 
