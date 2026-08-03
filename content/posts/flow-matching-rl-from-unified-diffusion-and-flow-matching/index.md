@@ -109,7 +109,7 @@ $$
 
 ---
 
-## 2. 第一步：用随机插值设计目标概率路径
+## 2. 构造双端点随机插值
 
 ### 2.1 两个端点与耦合
 
@@ -1108,7 +1108,7 @@ $$
 
 这说明 $b$ 控制平均位移，而 $\sigma$ 直接控制随机增量的标准差。
 
-### 6.3 先得到一般 SDE 的 Fokker--Planck 方程
+### 6.3 具有各向同性加性噪声的 SDE 的 Fokker--Planck 方程
 
 先给出本节结论。对于式 (6.2)
 
@@ -1137,374 +1137,215 @@ $$
 - $-\nabla\cdot(bp)$ 是漂移造成的概率输运；
 - $\tfrac12\sigma^2\Delta p$ 是噪声造成的概率扩散。
 
-下面证明这个结论。证明链只有四步：
+本节中 $\sigma(t)$ 是只依赖时间的标量，因此噪声在各个空间方向上强度相同。下面先在一维中推导，再推广到 $d$ 维。
+
+#### 一维小时间步推导
+
+先考虑一维 SDE
 
 $$
-\text{Itô 公式}
-\longrightarrow
-\text{取期望}
-\longrightarrow
-\text{按密度积分并分部积分}
-\longrightarrow
-\text{得到密度方程}.
+\mathrm dZ_t
+\mathrel{=}
+b(t,Z_t)\,\mathrm dt
+\mathbin{+}
+\sigma(t)\,\mathrm dW_t.
 $$
 
-取光滑、紧支撑的测试函数 $\varphi\in C_c^\infty(\mathbb R^d)$。梯度 $\nabla\varphi$ 和 Laplace 算子 $\Delta\varphi$ 已在第 4.1 节统一定义。现在，Itô 公式给出
+取一个很小的时间步 $h>0$。给定 $Z_t=x$，式 (6.3) 给出
+
+$$
+\Delta Z
+:=
+Z_{t+h}-Z_t
+\approx
+b(t,x)h
+\mathbin{+}
+\sigma(t)\sqrt h\,\xi,
+\qquad
+\xi\sim\mathcal N(0,1).
+$$
+
+因为 $\mathbb E[\xi]=0$ 且 $\mathbb E[\xi^2]=1$，所以
+
+$$
+\mathbb E[\Delta Z\mid Z_t=x]
+\mathrel{=}
+b(t,x)h,
+$$
+
+并且
 
 $$
 \begin{aligned}
-\mathrm d\varphi(Z_t)
-={}&
-\nabla\varphi(Z_t)\cdot b(t,Z_t)\,\mathrm dt
+\mathbb E[(\Delta Z)^2\mid Z_t=x]
+&=
+\mathbb E\!\left[
+\bigl(bh+\sigma\sqrt h\,\xi\bigr)^2
+\right]
 \\
-&+
-\frac12\sigma^2(t)\Delta\varphi(Z_t)\,\mathrm dt
+&=
+b^2h^2+\sigma^2h
 \\
-&+
-\sigma(t)\nabla\varphi(Z_t)\cdot\mathrm dW_t.
+&=
+\sigma^2h+o(h).
 \end{aligned}
 \tag{6.5}
 $$
 
-> **备注：式 (6.5) 是怎么来的？**
->
-> 关键是：布朗增量是 $\sqrt{\Delta t}$ 量级，所以它的平方是 $\Delta t$ 量级，不能忽略。因此普通的一阶链式法则必须补上二阶 Taylor 项。
->
-> 在一个小时间步内，
+中间的交叉项期望为零，因为它含有 $\mathbb E[\xi]=0$；$b^2h^2$ 比 $h$ 更小，因此记入 $o(h)$。
+
+取光滑紧支撑测试函数 $\varphi\in C_c^\infty(\mathbb R)$。对 $\varphi(x+\Delta Z)$ 作二阶 Taylor 展开：
 
 $$
-\Delta Z_t
-\approx
-b(t,Z_t)\Delta t
-\mathbin{+}
-\sigma(t)\sqrt{\Delta t}\,\xi,
-\qquad
-\xi\sim\mathcal N(0,\mathrm{Id}).
-$$
-
-> 对 $\varphi$ 作二阶 Taylor 展开：
-
-$$
-\varphi(Z_t+\Delta Z_t)-\varphi(Z_t)
-\approx
-\nabla\varphi(Z_t)\cdot\Delta Z_t
-\mathbin{+}
-\frac12
-\Delta Z_t^{\mathsf T}
-\nabla^2\varphi(Z_t)
-\Delta Z_t.
-$$
-
-> **为什么 Taylor 展开是这个形式？** 令 $z=Z_t$、$h=\Delta Z_t$。$d$ 维函数的二阶 Taylor 公式写成坐标形式是
-
-$$
-\varphi(z+h)
-\approx
-\varphi(z)
-\mathbin{+}
-\sum_{i=1}^d
-\frac{\partial\varphi}{\partial x_i}(z)h_i
-\mathbin{+}
-\frac12
-\sum_{i=1}^d\sum_{j=1}^d
-\frac{\partial^2\varphi}{\partial x_i\partial x_j}(z)
-h_i h_j.
-$$
-
-> 第一重求和就是梯度点积
-
-$$
-\sum_i\partial_{x_i}\varphi(z)h_i
+\varphi(x+\Delta Z)-\varphi(x)
 \mathrel{=}
-\nabla\varphi(z)\cdot h.
-$$
-
-> 定义 Hessian 矩阵
-
-$$
-\nabla^2\varphi(z)
-\mathrel{=}
-\left[
-\frac{\partial^2\varphi}{\partial x_i\partial x_j}(z)
-\right]_{i,j=1}^d,
-$$
-
-> 则二重求和正是矩阵二次型
-
-$$
-\sum_{i,j}
-\partial_{x_i x_j}\varphi(z)h_i h_j
-\mathrel{=}
-h^{\mathsf T}\nabla^2\varphi(z)h.
-$$
-
-> 将 $z=Z_t$、$h=\Delta Z_t$ 代回，并把等式两边减去 $\varphi(Z_t)$，就得到上面的展开。系数 $\tfrac12$ 与一维 Taylor 公式中的二阶项系数相同。
->
-> 一阶项直接给出
-
-$$
-\nabla\varphi(Z_t)\cdot b(t,Z_t)\,\mathrm dt
+\varphi'(x)\Delta Z
 \mathbin{+}
-\sigma(t)\nabla\varphi(Z_t)\cdot\mathrm dW_t.
+\frac12\varphi''(x)(\Delta Z)^2
+\mathbin{+}
+o(h).
 $$
 
->
-> 二阶项中有三类乘积：
->
-> - $(\mathrm dt)^2$ 是 $\mathrm dt^2$ 量级，可以忽略；
-> - $\mathrm dt\,\mathrm dW_t$ 是 $\mathrm dt^{3/2}$ 量级，也可以忽略；
-> - $(\mathrm dW_t)^2$ 是 $\mathrm dt$ 量级，必须保留。
->
-> Itô 记号把这件事写成
-
-$$
-(\mathrm dt)^2=0,
-\qquad
-\mathrm dt\,\mathrm dW_t=0,
-\qquad
-\mathrm dW_t\mathrm dW_t^{\mathsf T}
-\mathrel{=}
-\mathrm{Id}\,\mathrm dt.
-$$
-
-> 设 Hessian 的第 $(i,j)$ 个元素为
-
-$$
-H_{ij}
-:=
-\frac{\partial^2\varphi}{\partial x_i\partial x_j}(Z_t).
-$$
-
-> 二阶项中保留下来的布朗部分逐坐标展开为
-
-$$
-\frac12\sigma^2(t)
-\sum_{i=1}^d\sum_{j=1}^d
-H_{ij}\,\mathrm dW_t^{(i)}\mathrm dW_t^{(j)}.
-$$
-
-> Itô 规则的逐坐标形式是
-
-$$
-\mathrm dW_t^{(i)}\mathrm dW_t^{(j)}
-\mathrel{=}
-\delta_{ij}\,\mathrm dt,
-$$
-
-> 其中 $\delta_{ij}$ 是 Kronecker delta：当 $i=j$ 时等于 $1$，当 $i\ne j$ 时等于 $0$。因此所有 $i\ne j$ 的交叉项消失，只剩 $i=j$ 的对角项：
+给定 $Z_t=x$ 后取期望，并使用式 (6.5)：
 
 $$
 \begin{aligned}
-&\frac12\sigma^2(t)
-\sum_{i,j}H_{ij}\delta_{ij}\,\mathrm dt
-\\
-&\qquad=
-\frac12\sigma^2(t)
-\sum_{i=1}^d H_{ii}\,\mathrm dt
-\\
-&\qquad=
-\frac12\sigma^2(t)
-\operatorname{tr}(H)\,\mathrm dt.
-\end{aligned}
-$$
-
-> 这里的 $\operatorname{tr}$ 读作“迹”，表示方阵对角线元素之和。对于 Hessian，
-
-$$
-\operatorname{tr}(H)
-\mathrel{=}
-\sum_{i=1}^d
-\frac{\partial^2\varphi}{\partial x_i^2}(Z_t)
-\mathrel{=}
-\Delta\varphi(Z_t).
-$$
-
-> 所以二阶项最终变成
-
-$$
-\frac12\sigma^2(t)
-\Delta\varphi(Z_t)\,\mathrm dt.
-$$
-
->
-> 把一阶项和二阶项相加，就得到式 (6.5)。二阶项前面是正号：
-
-$$
-+\frac12\sigma^2(t)\Delta\varphi(Z_t)\,\mathrm dt.
-$$
-
-> 这里要求 $\varphi$ 光滑，是为了计算梯度和二阶导数；紧支撑条件主要在后面的分部积分中用于消除边界项。
-
-将式 (6.5) 从 $0$ 积分到 $t$，再取期望。满足适当可积性条件时，Itô 随机积分的期望为零，因此
-
-$$
-\begin{aligned}
-\frac{\mathrm d}{\mathrm dt}
-\mathbb E[\varphi(Z_t)]
-={}&
-\mathbb E[
-\nabla\varphi(Z_t)\cdot b(t,Z_t)
+&\mathbb E[
+\varphi(Z_{t+h})-\varphi(Z_t)
+\mid Z_t=x
 ]
 \\
-&+
-\frac12\sigma^2(t)
-\mathbb E[\Delta\varphi(Z_t)].
+&\quad=
+\left[
+b(t,x)\varphi'(x)
+\mathbin{+}
+\frac12\sigma^2(t)\varphi''(x)
+\right]h
++o(h).
 \end{aligned}
+$$
+
+再对 $Z_t$ 取总体期望，除以 $h$ 并令 $h\to0$，得到
+
+$$
+\frac{\mathrm d}{\mathrm dt}
+\mathbb E[\varphi(Z_t)]
+\mathrel{=}
+\mathbb E\!\left[
+b(t,Z_t)\varphi'(Z_t)
+\mathbin{+}
+\frac12\sigma^2(t)\varphi''(Z_t)
+\right].
 \tag{6.6}
 $$
 
-因为 $Z_t$ 的密度是 $p(t,x)$，可以把期望写成积分：
+现在把式 (6.6) 两边都写成关于密度 $p(t,x)$ 的积分。因为
+
+$$
+\mathbb E[\varphi(Z_t)]
+\mathrel{=}
+\int_{\mathbb R}\varphi(x)p(t,x)\,\mathrm dx,
+$$
+
+而 $\varphi(x)$ 不依赖时间，所以在可以交换求导与积分的条件下，
 
 $$
 \begin{aligned}
-\frac{\mathrm d}{\mathrm dt}
-\mathbb E[\varphi(Z_t)]
-={}&
-\int_{\mathbb R^d}
-\nabla\varphi(x)\cdot b(t,x)p(t,x)\,\mathrm dx
+\int_{\mathbb R}\varphi(x)\partial_t p(t,x)\,\mathrm dx
+&=
+\frac{\mathrm d}{\mathrm dt}\mathbb E[\varphi(Z_t)]
 \\
-&+
-\frac12\sigma^2(t)
-\int_{\mathbb R^d}
-\Delta\varphi(x)p(t,x)\,\mathrm dx.
+&=
+\int_{\mathbb R}
+\left[
+b(t,x)\varphi'(x)
+\mathbin{+}
+\frac12\sigma^2(t)\varphi''(x)
+\right]
+p(t,x)\,\mathrm dx.
 \end{aligned}
 \tag{6.7}
 $$
 
-对第一项分部积分一次，对第二项分部积分两次。因为 $\varphi$ 具有紧支撑，边界项为零：
+这就是式 (6.7) 左边的来源：密度 $p(t,x)$ 随时间变化，使测试函数的平均值 $\mathbb E[\varphi(Z_t)]$ 也随之变化。
+
+对右边第一项分部积分一次，对第二项分部积分两次。由于 $\varphi$ 具有紧支撑，边界项为零：
 
 $$
 \begin{aligned}
-\int_{\mathbb R^d}\nabla\varphi\cdot(bp)\,\mathrm dx
+\int_{\mathbb R}b\varphi'p\,\mathrm dx
 &=
--\int_{\mathbb R^d}\varphi\,\nabla\cdot(bp)\,\mathrm dx,
+-\int_{\mathbb R}\varphi\,\partial_x(bp)\,\mathrm dx,
 \\
-\int_{\mathbb R^d}(\Delta\varphi)p\,\mathrm dx
+\int_{\mathbb R}\varphi''p\,\mathrm dx
 &=
-\int_{\mathbb R^d}\varphi\,\Delta p\,\mathrm dx.
+\int_{\mathbb R}\varphi\,\partial_{xx}p\,\mathrm dx.
 \end{aligned}
 $$
 
-> **备注：为什么第一个公式有负号，第二个没有？**
->
-> 核心规则是：分部积分每转移一次空间导数，就产生一个负号。
->
-> **第一项只转移一次导数。** 令 $F=bp$。根据点积和散度的坐标定义，
+代回式 (6.7)，得到
 
 $$
-\nabla\varphi\cdot F
-\mathrel{=}
-\sum_{i=1}^d(\partial_{x_i}\varphi)F_i,
-\qquad
-\nabla\cdot F
-\mathrel{=}
-\sum_{i=1}^d\partial_{x_i}F_i.
-$$
-
-> 因此公式中的求和来自点积和散度本身的定义，不是分部积分额外产生的。对每个坐标 $x_i$ 分别进行一次分部积分：
-
-$$
-\begin{aligned}
-\int_{\mathbb R^d}\nabla\varphi\cdot F\,\mathrm dx
-&=
-\sum_{i=1}^d
-\int_{\mathbb R^d}
-(\partial_{x_i}\varphi)F_i\,\mathrm dx
-\\
-&=
--\sum_{i=1}^d
-\int_{\mathbb R^d}
-\varphi\,\partial_{x_i}F_i\,\mathrm dx
-\\
-&=
--\int_{\mathbb R^d}
-\varphi\,\nabla\cdot F\,\mathrm dx.
-\end{aligned}
-$$
-
-> 导数只转移一次，所以留下一个负号。
->
-> **第二项转移两次导数。** Laplace 算子为
-
-$$
-\Delta\varphi
-\mathrel{=}
-\sum_{i=1}^d\partial_{x_i}^2\varphi.
-$$
-
-> 对每个坐标方向连续分部积分两次：
-
-$$
-\begin{aligned}
-\int_{\mathbb R^d}
-(\partial_{x_i}^2\varphi)p\,\mathrm dx
-&=
--\int_{\mathbb R^d}
-(\partial_{x_i}\varphi)(\partial_{x_i}p)\,\mathrm dx
-\\
-&=
-+\int_{\mathbb R^d}
-\varphi\,\partial_{x_i}^2p\,\mathrm dx.
-\end{aligned}
-$$
-
-> 两次转移产生两个负号，
-
-$$
-(-1)^2=+1.
-$$
-
-> 对所有坐标求和，得到
-
-$$
-\int_{\mathbb R^d}
-(\Delta\varphi)p\,\mathrm dx
-\mathrel{=}
-\int_{\mathbb R^d}
-\varphi\,\Delta p\,\mathrm dx.
-$$
-
->
-> 上述分部积分本来还会产生边界项。由于 $\varphi$ 具有紧支撑，它在足够远处为零，所以这些边界项全部消失。
-
-将上述两个分部积分结果代回式 (6.7)，于是
-
-$$
-\frac{\mathrm d}{\mathrm dt}
-\mathbb E[\varphi(Z_t)]
-\mathrel{=}
-\int_{\mathbb R^d}
-\varphi(x)
+\int_{\mathbb R}\varphi(x)
 \left[
--\nabla\cdot(bp)
+\partial_t p
 \mathbin{+}
-\frac12\sigma^2\Delta p
-\right](t,x)\,\mathrm dx.
+\partial_x(bp)
+\mathbin{-}
+\frac12\sigma^2\partial_{xx}p
+\right](t,x)\,\mathrm dx
+=0.
+$$
+
+因为测试函数 $\varphi$ 可以任意选择，所以只能有
+
+$$
+\boxed{
+\partial_t p
+\mathrel{=}
+-\partial_x(bp)
+\mathbin{+}
+\frac12\sigma^2(t)\partial_{xx}p.
+}
 \tag{6.8}
 $$
 
-另一方面，
+#### 推广到 $d$ 维
+
+在 $d$ 维中，给定 $Z_t=x$，小时间步增量满足
 
 $$
-\mathbb E[\varphi(Z_t)]
-\mathrel{=}
-\int_{\mathbb R^d}\varphi(x)p(t,x)\,\mathrm dx,
-$$
-
-所以
-
-$$
-\frac{\mathrm d}{\mathrm dt}
-\mathbb E[\varphi(Z_t)]
-\mathrel{=}
-\int_{\mathbb R^d}
-\varphi(x)\partial_t p(t,x)\,\mathrm dx.
+\begin{aligned}
+\mathbb E[\Delta Z\mid Z_t=x]
+&=
+b(t,x)h,
+\\
+\mathbb E[\Delta Z\Delta Z^{\mathsf T}\mid Z_t=x]
+&=
+\sigma^2(t)h\,\mathrm{Id}+o(h).
+\end{aligned}
 \tag{6.9}
 $$
 
-> **备注：** 式 (6.9) 使用的步骤与式 (4.4) 完全相同，只是将密度 $\rho(t,x)$ 换成了 $p(t,x)$；详见式 (4.4) 下方的备注。
+对二阶 Taylor 项取期望时，不同噪声坐标之间的交叉项为零，只留下 Hessian 对角线元素之和：
 
-比较式 (6.8) 和式 (6.9)。由于测试函数 $\varphi$ 可以任意选择，只能有
+$$
+\operatorname{tr}(\nabla^2\varphi)
+\mathrel{=}
+\Delta\varphi.
+$$
+
+因此，一维推导中的导数相应变为
+
+$$
+\varphi'\longrightarrow\nabla\varphi,
+\qquad
+\varphi''\longrightarrow\Delta\varphi,
+\qquad
+\partial_x(bp)\longrightarrow\nabla\cdot(bp).
+$$
+
+最终得到
 
 $$
 \boxed{
@@ -1512,12 +1353,12 @@ $$
 \mathrel{=}
 -\nabla\cdot(bp)
 \mathbin{+}
-\frac12\sigma^2\Delta p.
+\frac12\sigma^2(t)\Delta p.
 }
 \tag{6.10}
 $$
 
-这就证明了本节开头给出的 Fokker--Planck 方程。
+其中，系数 $\tfrac12$ 来自二阶 Taylor 展开，Laplace 算子来自各个独立噪声坐标的二阶导数之和。这就是 Fokker--Planck 方程。
 
 ### 6.4 定义 score，并用它设计漂移
 
