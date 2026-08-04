@@ -1015,7 +1015,7 @@ b(t,Z_t)\,\mathrm dt
 \tag{6.2}
 $$
 
-本文统一按 Itô 意义理解 SDE。由于噪声幅度 $\sigma(t)$ 不依赖状态 $Z_t$，在当前设定下，Itô 与 Stratonovich 解释给出相同结果。
+本文统一按 Itô 意义理解 SDE。
 
 式中：
 
@@ -1791,43 +1791,7 @@ $$
 
 这正是“随机监督标签为什么仍能训练出确定速度场”的原因：平方回归会把同一 $(t,x)$ 对应的随机标签取平均，最终输出条件平均速度 $u(t,x)$。
 
-### 7.2 与论文二次目标的关系
-
-本节所说的“论文”是指 Michael S. Albergo、Nicholas M. Boffi 和 Eric Vanden-Eijnden 的 [*Stochastic Interpolants: A Unifying Framework for Flows and Diffusions*](https://arxiv.org/abs/2303.08797)，arXiv:2303.08797v4。该论文使用
-
-$$
-\boxed{
-\mathcal L_u[\hat u]
-\mathrel{=}
-\int_0^1
-\mathbb E\left[
-\frac12\|\hat u(t,x_t)\|^2
--Y_t\cdot\hat u(t,x_t)
-\right]\mathrm dt.
-}
-\tag{7.4}
-$$
-
-因为
-
-$$
-\frac12\|\hat u-Y_t\|^2
-\mathrel{=}
-\frac12\|\hat u\|^2
--Y_t\cdot\hat u
-\mathbin{+}
-\frac12\|Y_t\|^2,
-$$
-
-所以式 (7.4) 与均方损失只相差
-
-$$
-\frac12\mathbb E\|Y_t\|^2,
-$$
-
-这一项不依赖网络 $\hat u$。因此两个目标函数具有完全相同的最优解。
-
-### 7.3 实际训练步骤
+### 7.2 实际训练步骤
 
 一次无偏的随机训练迭代可以写成：
 
@@ -1860,7 +1824,7 @@ $$
 
 条件期望由平方回归自动实现。
 
-### 7.4 如何学习 score
+### 7.3 如何学习 score
 
 第 6 章构造同边际 SDE 还需要目标密度的 score。对于
 
@@ -1889,7 +1853,7 @@ s(t,x)
 -\frac1{\gamma(t)}
 \mathbb E[z\mid x_t=x].
 }
-\tag{7.5}
+\tag{7.4}
 $$
 
 因此可以使用平方回归目标
@@ -1905,10 +1869,10 @@ s_\theta(t,x_t)
 \frac{z}{\gamma(t)}
 \right\|^2.
 }
-\tag{7.6}
+\tag{7.5}
 $$
 
-在理想函数类中，它的最优解就是式 (7.5) 的 $s(t,x)$。由于 $-z/\gamma(t)$ 在 $\gamma(t)\to0$ 时会放大，实际训练中也可以预测更稳定的条件平均噪声
+在理想函数类中，它的最优解就是式 (7.4) 的 $s(t,x)$。由于 $-z/\gamma(t)$ 在 $\gamma(t)\to0$ 时会放大，实际训练中也可以预测更稳定的条件平均噪声
 
 $$
 \varepsilon_\theta(t,x)
@@ -2987,49 +2951,6 @@ $$
 
 所以，DDIM 通常不需要重新训练模型；它主要改变采样动力学和离散更新方式。
 
-> **备注：DDIM 也可以保留部分随机性。**
->
-> 更一般的 DDIM 更新可以写成
->
-
-$$
-\boxed{
-\begin{aligned}
-y_{k-1}
-={}&
-\sqrt{\bar\alpha_{k-1}}\widehat y_0
-\\
-&+
-\sqrt{
-1-\bar\alpha_{k-1}-\sigma_{k,\eta}^2
-}\,\widehat\varepsilon_k
-\mathbin{+}
-\sigma_{k,\eta}\xi_k,
-\end{aligned}
-}
-\tag{12.1}
-$$
-
->
-> 其中
->
-
-$$
-\boxed{
-\sigma_{k,\eta}
-:=
-\eta\sqrt{\widetilde\beta_k},
-\qquad
-0\le\eta\le1.
-}
-\tag{12.2}
-$$
-
->
-> - $\eta=0$：回到式 (11.3) 的确定性 DDIM；
-> - $\eta=1$：使用常见 DDPM 的后验噪声尺度；
-> - $0<\eta<1$：在确定性与随机性之间调节。
-
 ![VP 前向路径、反向 SDE、概率流 ODE、DDPM 与 DDIM 的关系](assets/unified-diffusion/vp-sde-ode-ddpm-ddim-concept-map.png)
 
 *图 2：同一组 VP 前向加噪边际和同一个噪声预测器，可以连接到随机的反向 VP SDE 与离散 DDPM，也可以连接到确定性的 VP 概率流 ODE 与离散 DDIM。本图按本文的符号和逻辑重绘。*
@@ -3047,7 +2968,7 @@ $$
 | Rectified Flow | 线性端点插值 | $x_1-x_0$ 的条件平均 | ODE |
 | Score-based diffusion | 数据到噪声的前向高斯加噪边际 | score 或等价噪声 | 反向 SDE / 概率流 ODE |
 | DDPM | 离散 VP 加噪链 | 噪声或等价 score | 随机反向马尔可夫链 |
-| DDIM | 与 DDPM 相同的训练扰动边际 | 同一个预测器 | 确定性或部分随机更新 |
+| DDIM | 与 DDPM 相同的训练扰动边际 | 同一个预测器 | 确定性更新 |
 
 ### 13.2 最关键的两条证明链
 
