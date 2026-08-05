@@ -1,5 +1,5 @@
 ---
-title: "流匹配的RL（一）: 从统一diffusion与flow matching谈起"
+title: "流匹配的RL（一）：统一理解Diffusion与Flow-Matching"
 date: 2026-07-31T17:39:06+08:00
 draft: false
 tags:
@@ -14,138 +14,129 @@ TocOpen: false
 math: true
 ---
 
-## 从“先设计概率路径”到“再构造生成动力学”
+## 从双端点随机插值出发，联系常见生成算法
 
-本文希望回答一个核心问题：
+本文只回答一个主问题：
 
-> 给定易采样的噪声分布和目标数据分布，怎样先设计一条连接二者的概率路径，再用 ODE 或 SDE 在生成阶段实现这条路径？
+给定一个容易采样的噪声分布和一个目标数据分布，怎样先设计连接二者的概率路径，直接得到概率流 ODE，再额外构造同边际 SDE，并把它们与 Flow Matching、DDPM 和 DDIM 联系起来？
 
-全文最重要的逻辑链是
-
-$$
-\boxed{
-\begin{array}{c}
-\text{训练时构造随机插值 }x_t
-\\[1mm]
-\Downarrow
-\\[1mm]
-\text{得到目标边际路径 }\rho(t)
-\text{ 和随机速度标签 }Y_t
-\\[1mm]
-\Downarrow
-\\[1mm]
-u(t,x)=\mathbb E[Y_t\mid x_t=x]
-\\[1mm]
-\Downarrow
-\\[1mm]
-\begin{cases}
-\text{ODE 产生的密度 }q(t)=\rho(t),\\
-\text{适当 SDE 产生的密度 }p(t)=\rho(t).
-\end{cases}
-\end{array}}
-$$
-
-这里的关键不是说 ODE、SDE 和随机插值具有相同的单条轨迹，而是说：
+> ODE 和 SDE 都是描述“一个状态如何随时间变化”的方程，区别在于有没有随机噪声。
+ODE：Ordinary Differential Equation，常微分方程。
+SDE：Stochastic Differential Equation，随机微分方程。
 
 $$
 \boxed{
-\text{它们可以具有相同的单时刻边际分布。}
+\text{随机插值、ODE 和 SDE 的单条轨迹通常不同，}
+\quad
+\text{但它们可以具有相同的单时刻边际分布。}
 }
 $$
 
-> **备注：什么是“单时刻边际分布”？**
+![论文图 1：Stochastic Interpolant 的总体框架](images/paper-figure-01-framework.png)
+
+*图 1：先用随机插值规定从 $\rho_0$ 到 $\rho_1$ 的边际路径，再学习速度与 score；ODE 和带 score 修正的 SDE 是实现同一组边际的不同生成动力学。图中的 SDE 不是由单个 latent noise $z$ 直接变成的，而是引入布朗运动后另外构造的。来源：[Albergo, Boffi & Vanden-Eijnden, v4, Figure 1](https://arxiv.org/abs/2303.08797v4)。*
+
+> **备注：什么是单时刻边际？**
 >
-> 一个随机过程不仅包含某个时刻的随机变量，还包含整条随机轨迹：
-
-$$
-\{X_t:0\le t\le1\}.
-$$
-
-> 它的完整概率规律包括多个时刻之间的联合分布，例如
-
-$$
-(X_{0.2},X_{0.5},X_{0.8}).
-$$
-
-> 现在只固定一个时刻 $t$，不关心其他时刻，只看 $X_t$ 取不同值的概率，这就是时刻 $t$ 的边际分布：
+> 一个随机过程包含整条轨迹 $\{X_t:0\le t\le1\}$。完整的过程规律还包括多个时刻之间的联合分布，例如 $(X_{0.2},X_{0.8})$。
+>
+> 单时刻边际只固定一个 $t$，看 $X_t$ 的分布：
+>
 
 $$
 X_t\sim q(t,\cdot).
 $$
 
-> “边际”这个名字来自联合分布。例如已知两个时刻的联合密度 $p_{s,t}(x,y)$，把另一个时刻的变量 $x$ 积分消掉：
+>
+> “边际”来自把联合分布中的其他变量积分掉。例如若 $(X_s,X_t)$ 的联合密度是 $p_{s,t}(x,y)$，那么
+>
 
 $$
-p_t(y)=\int_{\mathbb R^d}p_{s,t}(x,y)\,\mathrm dx,
+p_t(y)
+\mathrel{=}
+\int_{\mathbb R^d}
+p_{s,t}(x,y)\,\mathrm dx
 $$
 
-> 得到的 $p_t$ 就是 $X_t$ 的边际密度。
+>
+> 就是 $X_t$ 的边际密度。两个过程可以在每个时刻具有相同边际，却有完全不同的 $p_{s,t}$，因而轨迹形状和多时刻联合分布都可以不同。
 
 ---
 
-## 1. 三个层次必须分开
+# 第一部分：先设计一条概率路径
 
-为了避免混淆，先区分全文中的三类对象。
+## 1. 三类对象必须分开
 
-| 层次 | 随机变量或过程 | 密度 | 作用 |
+本文会同时出现三类随机对象。
+
+| 对象 | 记号 | 密度 | 作用 |
 |---|---|---|---|
-| 训练时设计的随机插值 | $x_t$ | $\rho(t,x)$ | 定义希望模型复现的概率路径 |
-| 生成 ODE | $X_t$ | $q(t,x)$ | 从噪声出发进行确定性生成 |
-| 生成 SDE | $Z_t$ | $p(t,x)$ | 从噪声出发进行随机生成 |
+| 训练时设计的随机插值 | $x_t$ | $\rho(t,x)$ | 规定希望模型复现的概率路径 |
+| 生成 ODE | $X_t$ | $q(t,x)$ | 确定性地生成样本 |
+| 生成 SDE | $Z_t$ | $p(t,x)$ | 随机地生成样本 |
 
-另外还要区分两类速度：
+还要区分两类速度：
 
-| 符号 | 含义 |
+| 记号 | 含义 |
 |---|---|
-| $Y_t=\dot x_t$ | 一条随机插值轨迹的随机速度 |
-| $u(t,x)=\mathbb E[Y_t\mid x_t=x]$ | 给定时间和位置后的条件平均速度场 |
+| $Y_t=\dot x_t$ | 某一条随机插值轨迹的随机速度 |
+| $b(t,x)=\mathbb E[Y_t\mid x_t=x]$ | 给定时间和位置后的条件平均速度 |
 
-其中：
-
-- $\rho,q,p$ 都是概率密度，不是速度场；
-- $Y_t$ 是依赖隐藏变量的随机速度；
-- $u(t,x)$ 是只依赖当前时间和位置的确定性速度场；
-- 理论中的 $u$ 是精确条件期望，实际模型学习的是近似 $u_\theta$。
+其中 $Y_t$ 依赖隐藏的端点和高斯变量；$b(t,x)$ 只依赖当前的 $(t,x)$，因此可以放进 ODE 或 SDE。
 
 ---
 
-## 2. 构造双端点随机插值
+## 2. 双端点随机插值
 
-### 2.1 两个端点与耦合
+### 2.1 端点分布与耦合
 
-约定生成时间 $t$ 从 $0$ 增长到 $1$：
+本文先使用生成时间
 
 $$
-\rho_0=\text{易采样的基分布，通常为高斯噪声},
-\qquad
+t:0\longrightarrow1,
+$$
+
+并约定
+
+$$
+\rho_0=\text{容易采样的基分布，通常是高斯噪声},
+$$
+
+$$
 \rho_1=\text{目标数据分布}.
 $$
 
-采样
+采样一对端点
 
 $$
 (x_0,x_1)\sim\nu,
 $$
 
-其中 $\nu$ 的两个边际分别是 $\rho_0$ 和 $\rho_1$。最简单的选择是独立耦合
+其中 $\nu$ 的两个边际分别是 $\rho_0$ 和 $\rho_1$。
+
+最简单的选择是独立耦合
 
 $$
 \nu=\rho_0\otimes\rho_1.
 $$
 
-耦合 $\nu$ 决定哪些噪声样本与哪些数据样本配对，但不改变两个端点分布。
+这表示随机选择一个噪声样本，再独立选择一个数据样本，把它们临时配成一对。
 
-### 2.2 双端点随机插值
+耦合 $\nu$ 不改变端点分布，但会改变中间路径和学习难度。
 
-取满足端点条件的确定性插值函数
+### 2.2 一般双端点公式
+
+选择一个满足
 
 $$
 I(0,x_0,x_1)=x_0,
 \qquad
-I(1,x_0,x_1)=x_1.
+I(1,x_0,x_1)=x_1
 $$
 
-再采样独立高斯潜变量
+的确定性插值函数。
+
+再独立采样
 
 $$
 z\sim\mathcal N(0,\mathrm{Id}),
@@ -157,26 +148,35 @@ $$
 
 $$
 \boxed{
-x_t=I(t,x_0,x_1)+\gamma(t)z.
+x_t
+\mathrel{=}
+I(t,x_0,x_1)+\gamma(t)z.
 }
 \tag{2.1}
 $$
 
-对本节的双端点随机插值，要求
+对一般 stochastic interpolant，取
 
 $$
-\gamma(0)=\gamma(1)=0.
+\gamma(0)=\gamma(1)=0,
+$$
+
+并通常要求
+
+$$
+\gamma(t)>0,
+\qquad 0<t<1.
 $$
 
 于是
 
 $$
-x_0\sim\rho_0,
+x_{t=0}=x_0\sim\rho_0,
 \qquad
-x_1\sim\rho_1.
+x_{t=1}=x_1\sim\rho_1.
 $$
 
-定义 $x_t$ 的边际密度为
+定义 $x_t$ 的单时刻边际密度
 
 $$
 \boxed{
@@ -185,29 +185,59 @@ x_t\sim\rho(t,\cdot).
 \tag{2.2}
 $$
 
-因此 $\rho(t)$ 是由随机插值预先设计出来的目标概率路径。此时它还没有被证明是某个生成 ODE 或生成 SDE 的密度。
+式 (2.1) 的首要作用不是直接生成数据，而是规定一条连接 $\rho_0$ 和 $\rho_1$ 的概率路径。
 
-### 2.3 为什么随机插值本身通常不是生成算法
+> **备注：为什么式 (2.1) 通常不能直接用于生成？**
+>
+> 训练时可以同时取得噪声端点 $x_0$ 和数据端点 $x_1$，所以能够直接计算 $x_t$。
+>
+> 生成时只有新的 $x_0\sim\rho_0$，并不知道它应该对应哪个真实数据 $x_1$。因此需要学习一个只依赖 $(t,x)$ 的速度场，再从 $x_0$ 出发运行 ODE 或 SDE。
 
-训练时可以同时取得噪声样本 $x_0$ 和数据样本 $x_1$，所以容易构造 $x_t$。
+### 2.3 本文使用的正则性约定
 
-但生成时只有
+为了集中讨论主线，后文假设：
 
-$$
-x_0\sim\rho_0,
-$$
+- $I$ 和 $\gamma$ 对时间足够光滑；
+- 所需期望有限；
+- 可以交换时间求导、期望和积分；
+- 相关密度和速度场足够光滑；
+- 在使用 score 时，内部时刻的密度为正。
 
-并不知道目标端点 $x_1$。因此不能直接依靠式 (2.1) 生成新数据。
+这些假设保证后面的链式法则、分部积分、Fokker--Planck 方程和 PDE 唯一性可以正常使用。
 
-随机插值的主要作用是：
+当 $\gamma(t)>0$ 时，中间分布包含高斯卷积（把原来的概率分布用高斯噪声轻轻模糊、摊开），通常会比 $\gamma=0$ 的路径更平滑。
 
-1. 定义希望生成模型复现的中间边际 $\rho(t)$；
-2. 提供可以直接采样的监督信号；
-3. 帮助构造只依赖 $(t,x)$ 的 ODE 或 SDE。
+![论文图 4：latent noise 尺度 $\gamma(t)$ 对中间边际的影响](images/paper-figure-04-gamma-density.png)
+
+*每一行使用不同的 $\gamma(t)$。额外高斯变量越能平滑中间密度，端点模态在中间时刻产生的重叠和伪结构通常越少；但这只是路径设计的效果，并不等于生成 SDE 的布朗噪声。来源：[论文 v4, Figure 4](https://arxiv.org/abs/2303.08797v4)。*
+
 
 ---
 
-## 3. 从随机轨迹速度得到确定速度场
+## 3. 两种不同的“噪声旋钮”
+
+后文会出现两种噪声，它们不能混为一谈。
+
+| 噪声 | 出现在哪里 | 主要作用 | 是否直接使生成轨迹随机 |
+|---|---|---|---|
+| $\gamma(t)z$ | 训练时的随机插值 | 设计和平滑中间边际，改变监督信号 | 否 |
+| $\sqrt{2\epsilon(t)}\,\mathrm dW_t$ | 生成 SDE | 改变生成动力学和轨迹随机性 | 是 |
+
+$\gamma$ 决定“训练时希望学习哪条边际路径”；$\epsilon$ 决定“生成时用多随机的 SDE 实现这条边际路径”。
+
+这正是统一框架的重要自由度：
+
+$$
+\boxed{
+\text{先选概率路径，再选实现这条路径的动力学。}
+}
+$$
+
+---
+
+# 第二部分：从随机插值得到可学习的场
+
+## 4. 从随机轨迹速度得到确定速度场
 
 对式 (2.1) 关于时间求导：
 
@@ -217,153 +247,130 @@ Y_t:=\dot x_t
 \mathrel{=}
 \partial_tI(t,x_0,x_1)+\dot\gamma(t)z.
 }
-\tag{3.1}
+\tag{4.1}
 $$
 
-$Y_t$ 是单条随机插值轨迹的速度。即使给定 $x_t=x$，仍可能有多组不同的 $(x_0,x_1,z)$ 经过该位置，并产生不同的 $Y_t$。
+$Y_t$ 是随机的。即使给定 $x_t=x$，也可能有很多不同的 $(x_0,x_1,z)$ 经过同一个位置，并给出不同的速度。
 
-而 ODE 的速度场必须满足：给定 $(t,x)$ 后，速度是一个确定向量。
-
-因此定义
+ODE 在同一个 $(t,x)$ 处只能使用一个确定速度。因此定义
 
 $$
 \boxed{
-u(t,x)
+b(t,x)
 :=
 \mathbb E[Y_t\mid x_t=x].
 }
-\tag{3.2}
+\tag{4.2}
 $$
 
-这一步可以理解为从“拉格朗日随机轨迹速度”得到“欧拉确定速度场”。
-
-需要特别注意：
+也就是
 
 $$
-Y_t=u(t,x_t)
+b(t,x)
+\mathrel{=}
+\mathbb E[
+\partial_tI(t,x_0,x_1)+\dot\gamma(t)z
+\mid x_t=x
+].
 $$
 
-一般不会逐样本成立。成立的是条件平均关系
+一般并没有逐样本等式
+
+$$
+Y_t=b(t,x_t).
+$$
+
+正确的是
 
 $$
 \boxed{
-\mathbb E[Y_t\mid x_t]=u(t,x_t).
+\mathbb E[Y_t\mid x_t]=b(t,x_t).
 }
-\tag{3.3}
+\tag{4.3}
 $$
+
+> **备注：怎样理解条件期望？**
+>
+> 可以把所有训练样本按照当前的 $(t,x_t)$ 分组。在同一组中，隐藏端点和随机速度可以不同。$b(t,x)$ 就是这一组随机速度的平均值。
+>
+> 因而，$b$ 是从“许多微观随机速度”提取出的“宏观概率输运速度”。
 
 ---
 
-## 4. 为什么随机插值密度 $\rho$ 满足连续性方程
+## 5. 为什么 $\rho$ 满足连续性方程
 
-### 4.1 测试函数证明
-
-为突出主要逻辑，以下假设 $I$ 和 $\gamma$ 对时间可微、相关期望有限、允许交换时间求导与期望，并假设涉及的密度和速度场足够光滑。
-
-取任意光滑紧支撑测试函数
+取任意光滑且只在有限区域内非零的测试函数
 
 $$
 \varphi\in C_c^\infty(\mathbb R^d).
 $$
 
-> **备注：什么是测试函数？**
+> **备注：测试函数是什么，为什么要引入它？**
 >
-> $\varphi\in C_c^\infty(\mathbb R^d)$ 表示 $\varphi$ 是定义在 $d$ 维空间上的光滑函数：$C^\infty$ 表示可以无限次求导，右下角的 $c$ 表示它只在某个有限区域内非零，称为“紧支撑”。
+> $C^\infty$ 表示函数可以无限次求导；下标 $c$ 表示 compact support，即它只在某个有限区域内非零。可以把 $\varphi$ 看成一个“光滑探测器”：如果它在区域 $A$ 内接近 $1$、区域外接近 $0$，那么
 >
-> 可以把 $\varphi$ 看成一个光滑探测器。若它在区域 $A$ 内接近 $1$、区域外接近 $0$，那么 $\mathbb E[\varphi(x_t)]$ 就近似测量 $x_t$ 落在区域 $A$ 内的概率。紧支撑还保证分部积分时无穷远处不会产生边界项。
 
-> **备注：三个常用的空间微分算子**
+$$
+\mathbb E[\varphi(x_t)]
+$$
+
 >
-> 后文会反复使用梯度 $\nabla$、散度 $\nabla\cdot$ 和 Laplace 算子 $\Delta$。这里统一定义。
+> 就近似表示 $x_t$ 落入区域 $A$ 的概率。选取紧支撑函数还有一个技术好处：做分部积分时，无穷远处的边界项自动消失。
+
+> **备注：三个空间微分算子的含义**
 >
-> 设 $f:\mathbb R^d\to\mathbb R$ 是标量函数。它的**梯度**是由所有一阶偏导数组成的向量：
+> 对标量函数 $f:\mathbb R^d\to\mathbb R$，梯度是向量
 >
 
 $$
 \boxed{
-\nabla f(x)
+\nabla f
 \mathrel{=}
 \left(
-\partial_{x_1}f(x),
-\ldots,
-\partial_{x_d}f(x)
+\partial_{x_1}f,\ldots,\partial_{x_d}f
 \right).
 }
 $$
 
 >
-> $\nabla f$ 指向 $f$ 在当前位置上升最快的方向，$\|\nabla f\|$ 表示上升的陡峭程度。若 $F=(F_1,\ldots,F_d)$ 是向量场，则
->
-
-$$
-\nabla f\cdot F
-\mathrel{=}
-\sum_{i=1}^d
-(\partial_{x_i}f)F_i.
-$$
-
->
-> 向量场 $F:\mathbb R^d\to\mathbb R^d$ 的**散度**是一个标量：
+> 它指向函数上升最快的方向。对向量场 $F=(F_1,\ldots,F_d)$，散度是标量
 >
 
 $$
 \boxed{
-\nabla\cdot F(x)
+\nabla\cdot F
 \mathrel{=}
-\sum_{i=1}^d
-\partial_{x_i}F_i(x).
+\sum_{i=1}^d\partial_{x_i}F_i.
 }
 $$
 
 >
-> $\nabla\cdot F$ 描述一个位置附近的局部净流出程度：大于零表示流出多于流入，小于零表示流入多于流出。
->
-> 标量函数 $f$ 的 **Laplace 算子**是各坐标方向二阶偏导数之和：
+> 散度衡量当前位置附近的“净流出”：$\nabla\cdot F>0$ 表示流出多于流入。Laplace 算子是
 >
 
 $$
 \boxed{
-\Delta f(x)
-:=
-\sum_{i=1}^d
-\partial_{x_i}^2f(x)
-\mathrel{=}
-\nabla\cdot(\nabla f(x)).
-}
-$$
-
->
-> 因此，Laplace 算子就是“先取梯度，再取散度”。它也等于 Hessian 矩阵 $\nabla^2f$ 的迹：
->
-
-$$
 \Delta f
 \mathrel{=}
-\operatorname{tr}(\nabla^2f).
-$$
-
->
-> 三者的输入和输出可以概括为
->
-
-$$
-\boxed{
-\begin{aligned}
-\nabla &: \text{标量函数}\longrightarrow\text{向量场},
-\\
-\nabla\cdot &: \text{向量场}\longrightarrow\text{标量函数},
-\\
-\Delta &= \nabla\cdot\nabla:
-\text{标量函数}\longrightarrow\text{标量函数}.
-\end{aligned}
+\sum_{i=1}^d\partial_{x_i}^2f
+\mathrel{=}
+\nabla\cdot(\nabla f).
 }
 $$
 
-#### 回到测试函数证明
+>
+> 因此可以记成
+>
 
-现在回到连续性方程的证明。上面三个算子中，接下来首先用到梯度：取标量函数 $f=\varphi$，并让它沿随机轨迹 $x_t$ 取值，得到 $\varphi(x_t)$。
+$$
+\nabla:\text{标量}\to\text{向量},
+\qquad
+\nabla\cdot:\text{向量}\to\text{标量},
+\qquad
+\Delta=\nabla\cdot\nabla.
+$$
 
-轨迹 $x_t$ 的瞬时速度是 $Y_t=\dot x_t$。因此，$\varphi(x_t)$ 随时间的变化率由“$\varphi$ 对空间位置的变化”与“轨迹本身的移动速度”共同决定。多变量链式法则给出
+沿一条随机插值轨迹使用链式法则：
 
 $$
 \frac{\mathrm d}{\mathrm dt}\varphi(x_t)
@@ -371,11 +378,21 @@ $$
 \nabla\varphi(x_t)\cdot Y_t.
 $$
 
-> **备注：为什么链式法则给出这个等式？**
+> **备注：为什么多变量链式法则得到这个点积？**
 >
-> 写成坐标形式，$x_t=(x_t^{(1)},\ldots,x_t^{(d)})$。多变量链式法则给出：$\displaystyle \frac{\mathrm d}{\mathrm dt}\varphi(x_t)=\sum_{i=1}^d\frac{\partial\varphi}{\partial x_i}(x_t)\frac{\mathrm dx_t^{(i)}}{\mathrm dt}$。
+> 写成坐标形式，$x_t=(x_t^{(1)},\ldots,x_t^{(d)})$。普通多变量链式法则给出
 >
-> 根据上面对梯度的定义，并使用 $Y_t=\dot x_t$，上面的求和正是点积 $\nabla\varphi(x_t)\cdot Y_t$。虽然 $x_t$ 是随机的，但固定一次随机采样后，它就是一条普通的时间轨迹，因此可以逐轨迹使用链式法则。
+
+$$
+\frac{\mathrm d}{\mathrm dt}\varphi(x_t)
+\mathrel{=}
+\sum_{i=1}^d
+\frac{\partial\varphi}{\partial x_i}(x_t)
+\frac{\mathrm dx_t^{(i)}}{\mathrm dt}.
+$$
+
+>
+> 第一组分量组成 $\nabla\varphi(x_t)$，第二组分量组成 $\dot x_t=Y_t$，所以求和就是点积。虽然 $x_t$ 是随机的，但固定一次 $(x_0,x_1,z)$ 后，它就是一条普通的可微曲线，因此可以逐条轨迹使用链式法则。
 
 取期望：
 
@@ -386,14 +403,26 @@ $$
 \mathbb E[
 \nabla\varphi(x_t)\cdot Y_t
 ].
-\tag{4.1}
+\tag{5.1}
 $$
 
-> **备注：为什么可以交换时间求导与期望？**
+> **备注：为什么时间导数可以移到期望里面？**
 >
-> 直观上就是：**大量轨迹上观测值的平均变化速度，等于每条轨迹观测值变化速度的平均**。但依赖可微性和可积性条件；没有这些条件，求导与期望不一定能交换。
+> 这里使用
+>
 
-对 $x_t$ 使用条件期望：
+$$
+\frac{\mathrm d}{\mathrm dt}\mathbb E[\varphi(x_t)]
+\mathrel{=}
+\mathbb E\!\left[
+\frac{\mathrm d}{\mathrm dt}\varphi(x_t)
+\right].
+$$
+
+>
+> 直观上是“许多轨迹观测值的平均变化速度”等于“每条轨迹观测值变化速度的平均”。严格成立需要可微性、可积性以及一个可积函数控制导数；本文第 2.3 节的正则性约定正是为了允许这一步。没有这些条件时，求导与期望不能随意交换。
+
+对 $x_t$ 做条件平均：
 
 $$
 \begin{aligned}
@@ -401,42 +430,49 @@ $$
 \nabla\varphi(x_t)\cdot Y_t
 ]
 &=
-\mathbb E\!\left[
-\mathbb E\!\left[
-\nabla\varphi(x_t)\cdot Y_t
-\mid x_t
-\right]
-\right]
-\\
-&=
-\mathbb E\!\left[
+\mathbb E[
 \nabla\varphi(x_t)\cdot
 \mathbb E[Y_t\mid x_t]
-\right]
+]
 \\
 &=
 \mathbb E[
-\nabla\varphi(x_t)\cdot u(t,x_t)
+\nabla\varphi(x_t)\cdot b(t,x_t)
 ]
 \\
 &=
 \int_{\mathbb R^d}
-\nabla\varphi(x)\cdot u(t,x)\rho(t,x)\,\mathrm dx.
+\nabla\varphi(x)\cdot b(t,x)\rho(t,x)\,\mathrm dx.
 \end{aligned}
-\tag{4.2}
+\tag{5.2}
 $$
 
-> **备注：第一个等号使用塔式法则，第二个等号使用条件期望的“已知量提出”性质。**
+> **备注：式 (5.2) 的前两个等号用了什么？**
 >
-> 条件期望 $\mathbb E[Y_t\mid x_t]$ 可以理解为：按照 $x_t$ 的取值把样本分组，然后在每一组内对 $Y_t$ 求平均。
+> 条件期望 $\mathbb E[Y_t\mid x_t]$ 可以理解为：按照 $x_t$ 的取值把样本分组，再在每组内部平均 $Y_t$。首先使用塔式法则
 >
-> **塔式法则：** 先在每个 $x_t$ 分组内求平均，再对所有分组求总体平均，等于直接求总体平均：$\mathbb E[Z]=\mathbb E\left[\mathbb E[Z\mid x_t]\right]$。
+
+$$
+\mathbb E[Z]
+\mathrel{=}
+\mathbb E\!\left[\mathbb E[Z\mid x_t]\right].
+$$
+
 >
-> **已知量提出：** 给定 $x_t$ 后，任何只依赖 $x_t$ 的量都已经确定。因此对任意函数 $g$，有 $\mathbb E[g(x_t)Y_t\mid x_t]=g(x_t)\mathbb E[Y_t\mid x_t]$。
+> 然后注意：给定 $x_t$ 后，$\nabla\varphi(x_t)$ 已经是已知量，可以从条件期望中提出：
 >
-> 这里 $g(x_t)=\nabla\varphi(x_t)$，所以 $\mathbb E[\nabla\varphi(x_t)\cdot Y_t]=\mathbb E[\nabla\varphi(x_t)\cdot\mathbb E[Y_t\mid x_t]]$。
+
+$$
+\mathbb E[
+\nabla\varphi(x_t)\cdot Y_t
+\mid x_t]
+\mathrel{=}
+\nabla\varphi(x_t)\cdot
+\mathbb E[Y_t\mid x_t].
+$$
+
 >
-> 最后使用 $u(t,x)=\mathbb E[Y_t\mid x_t=x]$，便得到式 (4.2)。
+> 最后代入 $b(t,x)=\mathbb E[Y_t\mid x_t=x]$。这一步解释了为什么随机的微观速度 $Y_t$ 最终变成只依赖 $(t,x)$ 的确定速度场 $b$。
 
 分部积分得到
 
@@ -445,59 +481,22 @@ $$
 \mathbb E[\varphi(x_t)]
 \mathrel{=}
 -\int_{\mathbb R^d}
-\varphi(x)\nabla\cdot(\rho u)(t,x)\,\mathrm dx.
-\tag{4.3}
+\varphi(x)\nabla\cdot(\rho b)(t,x)\,\mathrm dx.
+\tag{5.3}
 $$
 
-> **备注：为什么分部积分会产生负号？**
+> **备注：分部积分为什么会产生负号？**
 >
-> 式 (4.2) 的最后一项是
-
-$$
-\int_{\mathbb R^d}\nabla\varphi(x)\cdot(\rho u)(t,x)\,\mathrm dx.
-$$
-
-> 分部积分的作用，是把原来作用在 $\varphi$ 上的空间导数 $\nabla$ 转移到 $\rho u$ 上；转移后会产生一个负号。
+> 分部积分把作用在测试函数 $\varphi$ 上的空间导数转移到概率流量 $\rho b$ 上。先看一维。由乘积求导公式
 >
-> 以一维情形为例。由乘积求导公式，
 
 $$
-(\varphi(x)F(x))'
-\mathrel{=}
-\varphi'(x)F(x)+\varphi(x)F'(x).
+(\varphi F)'=\varphi'F+\varphi F',
 $$
 
-> 在区间 $[a,b]$ 上对等式两边积分，得到
-
-$$
-\int_a^b(\varphi F)'(x)\,\mathrm dx
-\mathrel{=}
-\int_a^b\varphi'(x)F(x)\,\mathrm dx
-\mathbin{+}
-\int_a^b\varphi(x)F'(x)\,\mathrm dx.
-$$
-
-> 根据微积分基本定理，左边等于两个端点处函数值之差：
-
-$$
-\int_a^b(\varphi F)'(x)\,\mathrm dx
-\mathrel{=}
-\varphi(b)F(b)-\varphi(a)F(a).
-$$
-
-> 因而
-
-$$
-\int_a^b\varphi'(x)F(x)\,\mathrm dx
-\mathrel{=}
-\underbrace{\varphi(b)F(b)-\varphi(a)F(a)}_{\text{边界项}}
-\mathbin{-}
-\int_a^b\varphi(x)F'(x)\,\mathrm dx.
-$$
-
-> 这就是一维分部积分公式。负号来自把 $\int_a^b\varphi(x)F'(x)\,\mathrm dx$ 移到等号右边，并不是额外规定的。
 >
-> 把区间扩展到整个实数轴，就有
+> 在整个实数轴上积分可得
+>
 
 $$
 \int_{\mathbb R}\varphi'(x)F(x)\,\mathrm dx
@@ -507,7 +506,9 @@ $$
 \int_{\mathbb R}\varphi(x)F'(x)\,\mathrm dx.
 $$
 
-> 如果 $\varphi$ 在足够远处为零，或者更一般地，$\varphi(x)F(x)$ 在 $x\to\pm\infty$ 时衰减到零，那么边界项消失，于是
+>
+> 这里的负号来自把含 $F'$ 的积分移到等号右边。由于测试函数 $\varphi\in C_c^\infty$ 具有紧支撑，它在足够远处为零，边界项也随之消失，因此
+>
 
 $$
 \int_{\mathbb R}\varphi'(x)F(x)\,\mathrm dx
@@ -516,15 +517,28 @@ $$
 $$
 
 >
-> 最后代入 $F=\rho u$，便由式 (4.2) 得到式 (4.3)。直观上，$\rho u$ 是概率流量，$\nabla\cdot(\rho u)>0$ 表示某处流出的概率多于流入的概率，因此该处的概率密度应当下降；这也解释了负号的物理意义。
+> 在 $d$ 维中，对每个坐标分别使用这个公式并求和，普通导数就变成散度。令向量场 $F=\rho b$，得到
+>
+
+$$
+\boxed{
+\int_{\mathbb R^d}
+\nabla\varphi\cdot(\rho b)\,\mathrm dx
+\mathrel{=}
+-\int_{\mathbb R^d}
+\varphi\,\nabla\cdot(\rho b)\,\mathrm dx.
+}
+$$
+
+>
+> 直观上，$\rho b$ 是概率流量；$\nabla\cdot(\rho b)>0$ 表示某处流出多于流入，所以该处密度应当下降。这与式 (5.3) 中的负号一致。
 
 另一方面，
 
 $$
 \mathbb E[\varphi(x_t)]
 \mathrel{=}
-\int_{\mathbb R^d}
-\varphi(x)\rho(t,x)\,\mathrm dx,
+\int_{\mathbb R^d}\varphi(x)\rho(t,x)\,\mathrm dx,
 $$
 
 所以
@@ -535,784 +549,99 @@ $$
 \mathrel{=}
 \int_{\mathbb R^d}
 \varphi(x)\partial_t\rho(t,x)\,\mathrm dx.
-\tag{4.4}
+\tag{5.4}
 $$
 
-> **备注：式 (4.4) 为什么成立？**
+> **备注：为什么式 (5.4) 成立？**
 >
-> 对固定时刻 $t$，$x_t$ 的概率密度是 $\rho(t,x)$，所以 $\varphi(x_t)$ 的期望就是按该密度加权积分：
+> 因为 $x_t$ 的密度是 $\rho(t,x)$，任意函数的期望都可以按密度积分：
+>
 
 $$
 \mathbb E[\varphi(x_t)]
 \mathrel{=}
-\int_{\mathbb R^d}\varphi(x)\rho(t,x)\,\mathrm dx.
+\int_{\mathbb R^d}
+\varphi(x)\rho(t,x)\,\mathrm dx.
 $$
 
-> 这里 $x$ 只是积分变量。测试函数 $\varphi(x)$ 不依赖时间，随时间变化的只有密度 $\rho(t,x)$。在 $\rho$ 足够光滑、可以交换时间求导与积分的条件下，
+>
+> 这里 $x$ 只是积分变量，而 $\varphi(x)$ 本身不依赖时间。因此
+>
 
 $$
 \begin{aligned}
-\frac{\mathrm d}{\mathrm dt}\mathbb E[\varphi(x_t)]
+\frac{\mathrm d}{\mathrm dt}
+\mathbb E[\varphi(x_t)]
 &=
 \frac{\mathrm d}{\mathrm dt}
-\int_{\mathbb R^d}\varphi(x)\rho(t,x)\,\mathrm dx
+\int\varphi(x)\rho(t,x)\,\mathrm dx
 \\
 &=
-\int_{\mathbb R^d}
-\frac{\partial}{\partial t}
-\bigl[\varphi(x)\rho(t,x)\bigr]\,\mathrm dx
-\\
-&=
-\int_{\mathbb R^d}
-\varphi(x)\partial_t\rho(t,x)\,\mathrm dx.
+\int\varphi(x)\partial_t\rho(t,x)\,\mathrm dx.
 \end{aligned}
 $$
 
-> 最后一步使用了 $\partial_t\varphi(x)=0$。若测试函数本身也依赖时间，还会多出 $\int(\partial_t\varphi)\rho\,\mathrm dx$。
+>
+> 如果测试函数也写成 $\varphi(t,x)$，还会额外出现 $\int(\partial_t\varphi)\rho\,\mathrm dx$；本文选择与时间无关的 $\varphi$，所以没有这一项。
 
-
-比较式 (4.3) 和式 (4.4)：
+比较式 (5.3) 与式 (5.4)，得到
 
 $$
 \int_{\mathbb R^d}
 \varphi(x)
 \left[
-\partial_t\rho+\nabla\cdot(\rho u)
+\partial_t\rho+\nabla\cdot(\rho b)
 \right](t,x)\,\mathrm dx
 =0.
 $$
 
-由于测试函数 $\varphi$ 可以任意选择，在上述光滑假设下，只能有
+由于测试函数可以任意选择，
 
 $$
 \boxed{
 \partial_t\rho(t,x)
 \mathbin{+}
-\nabla\cdot\bigl(\rho(t,x)u(t,x)\bigr)
-=0
-}
-\tag{4.5}
-$$
-
-### 4.2 这一步表达了什么
-
-随机插值的单条轨迹使用随机速度 $Y_t$，但其边际密度只感受到条件平均后的概率流量
-
-$$
-\boxed{
-J_\rho(t,x)=\rho(t,x)u(t,x).
-}
-\tag{4.6}
-$$
-
-连续性方程就是概率质量守恒：
-
-$$
-\text{局部密度变化}
-\mathbin{+}
-\text{净流出量}
+\nabla\cdot\bigl(\rho(t,x)b(t,x)\bigr)
 =0.
-$$
-
----
-
-## 5. 构造 ODE，并证明其密度 $q$ 等于 $\rho$
-
-### 5.1 ODE 中的 $u$ 从哪里来
-
-为了避免误解，暂时把式 (3.2) 得到的速度记作
-
-$$
-u_{\mathrm{SI}}(t,x)
-\mathrel{=}
-\mathbb E[Y_t\mid x_t=x].
-$$
-
-接下来人为构造 ODE：
-
-$$
-\boxed{
-\dot X_t=u_{\mathrm{SI}}(t,X_t),
-\qquad
-X_0\sim\rho_0.
-}
-\tag{5.1}
-$$
-
-逻辑是
-
-$$
-\boxed{
-\text{先从随机插值得到 }u_{\mathrm{SI}},
-\quad
-\text{再把同一个 }u_{\mathrm{SI}}\text{ 放入 ODE。}
-}
-$$
-
-后文重新把 $u_{\mathrm{SI}}$ 简写为 $u$。
-
-定义 ODE 解的密度：
-
-$$
-\boxed{
-X_t\sim q(t,\cdot).
-}
-\tag{5.2}
-$$
-
-这里 $q$ 是 ODE 粒子群的密度。
-
-### 5.2 为什么 $q$ 也满足连续性方程
-
-因为
-
-$$
-\dot X_t=u(t,X_t),
-$$
-
-所以对测试函数 $\varphi$，
-
-$$
-\begin{aligned}
-\frac{\mathrm d}{\mathrm dt}
-\mathbb E[\varphi(X_t)]
-&=
-\mathbb E\!\left[
-\frac{\mathrm d}{\mathrm dt}\varphi(X_t)
-\right]
-\\
-&=
-\mathbb E[
-\nabla\varphi(X_t)\cdot\dot X_t
-]
-\\
-&=
-\mathbb E[
-\nabla\varphi(X_t)\cdot u(t,X_t)
-]
-\\
-&=
-\int_{\mathbb R^d}
-\nabla\varphi(x)\cdot u(t,x)q(t,x)\,\mathrm dx
-\\
-&=
--\int_{\mathbb R^d}
-\varphi(x)\nabla\cdot(qu)(t,x)\,\mathrm dx.
-\end{aligned}
-\tag{5.3}
-$$
-
-另一方面，
-
-$$
-\frac{\mathrm d}{\mathrm dt}
-\mathbb E[\varphi(X_t)]
-\mathrel{=}
-\int_{\mathbb R^d}
-\varphi(x)\partial_tq(t,x)\,\mathrm dx.
-\tag{5.4}
-$$
-
-> **备注：** 式 (5.4) 使用的步骤与式 (4.4) 完全相同，详见式 (4.4) 下方的备注。
-
-因此
-
-$$
-\boxed{
-\partial_tq+\nabla\cdot(qu)=0.
 }
 \tag{5.5}
 $$
 
-这个证明与第 4 节的数学骨架相同。区别是：
+这就是连续性方程。
 
-- 对随机插值，$\dot x_t=Y_t$ 不是 $x_t$ 的确定函数，需要条件平均；
-- 对 ODE，$\dot X_t=u(t,X_t)$ 已经是当前位置的确定函数。
-
-#### 两个证明的核心差异
-
-> 下式中，黑色部分是两个证明共有的操作；红色部分才是两者真正不同的地方。
-
-$$
-\boxed{
-\begin{aligned}
-\text{随机插值：}\quad
-\frac{\mathrm d}{\mathrm dt}\mathbb E[\varphi(x_t)]
-&=
-\mathbb E[
-\nabla\varphi(x_t)\cdot
-Y_t
-]
-\\
-&\mathrel{\overset{
-{\color{red}{\text{对 }x_t\text{ 做条件平均}}}
-}{=}}
-\mathbb E[
-\nabla\varphi(x_t)\cdot
-\mathbb E[Y_t\mid x_t]
-]
-\\
-&=
-\mathbb E[
-\nabla\varphi(x_t)\cdot u(t,x_t)
-],
-\\[3mm]
-\text{ODE：}\quad
-\frac{\mathrm d}{\mathrm dt}\mathbb E[\varphi(X_t)]
-&=
-\mathbb E[
-\nabla\varphi(X_t)\cdot
-\dot X_t
-]
-\\
-&\mathrel{\overset{
-{\color{red}{\dot X_t=u(t,X_t)}}
-}{=}}
-\mathbb E[
-\nabla\varphi(X_t)\cdot u(t,X_t)
-].
-\end{aligned}
-}
-\tag{5.5a}
-$$
-
-**两种方法的物理意义：**
-
-- **随机插值描述微观的随机轨迹。** 即使多条轨迹在同一时刻到达同一位置 $x_t=x$，它们的瞬时速度 $Y_t$ 也可能不同，因为它们可能来自不同的端点或噪声样本。边际密度并不分别追踪这些不同速度，只感受到它们在当前位置的条件平均
-  $$
-  u(t,x)=\mathbb E[Y_t\mid x_t=x].
-  $$
-  因而，$u$ 表示位置 $x$ 处概率质量的平均输运方向；速度偏差 $Y_t-u(t,x_t)$ 在同一位置进行条件平均后相互抵消。
-
-- **ODE 描述宏观的确定性概率流。** ODE 直接规定每个位置上的粒子速度为 $u(t,x)$。所有到达同一位置的 ODE 粒子都使用同一个速度场，不再保留随机插值中“同一位置可能具有不同瞬时速度”的微观差异。因此，ODE 可以看成直接实现条件平均后的概率流。
-
-两者的微观轨迹可以不同，但只要使用同一个速度场 $u$，它们对边际密度产生的概率流分别是 $\rho u$ 和 $qu$，并满足相同形式的连续性方程。随机插值负责从随机轨迹中提取平均速度场，ODE 则使用这个平均速度场输运概率质量。
-
-红色文字就是唯一的关键区别：随机插值需要先对随机速度做条件平均；ODE 直接使用定义中的确定速度。完成这一步以后，两边都变成“密度由同一个速度场 $u$ 输运”，后续的分部积分完全相同：
-
-$$
-\boxed{
-\begin{aligned}
-\text{随机插值：}\quad&
-\partial_t\rho
-\mathbin{+}
-\nabla\cdot(\rho u)=0,
-\\
-\text{ODE：}\quad&
-\partial_tq
-\mathbin{+}
-\nabla\cdot(qu)=0.
-\end{aligned}
-}
-\tag{5.5b}
-$$
-
-事实上
-
-$$
-\mathbb E[\dot X_t\mid X_t=x]
-\mathrel{=}
-\mathbb E[u(t,X_t)\mid X_t=x]
-\mathrel{=}
-u(t,x).
-$$
-
-所以 ODE 是一般“条件平均速度定理”的特殊情况。
-
-### 5.3 为什么能推出 $q=\rho$
-
-目前已经分别证明
-
-$$
-\partial_t\rho+\nabla\cdot(\rho u)=0,
-\qquad
-\rho(0)=\rho_0,
-\tag{5.6}
-$$
-
-以及
-
-$$
-\partial_tq+\nabla\cdot(qu)=0,
-\qquad
-q(0)=\rho_0.
-\tag{5.7}
-$$
-
-在 $u$ 对空间变量具有足够正则性，例如 Lipschitz，并满足适当增长条件时，连续性方程的初值问题具有唯一解。因此
-
-$$
-\boxed{
-q(t,x)=\rho(t,x).
-}
-\tag{5.8}
-$$
-
-特别地，
-
-$$
-X_1\sim q(1,\cdot)=\rho(1,\cdot)=\rho_1.
-$$
-
-这正是生成建模需要的结论：
-
-> 训练时借助已知数据端点设计随机插值；生成时不再使用数据端点，只从噪声出发运行 ODE，仍能在理想条件下到达目标数据分布。
-
-需要注意，$q=\rho$ 只表示单时刻边际相同。随机插值轨迹 $x_t$ 与 ODE 轨迹 $X_t$ 通常不同。
-
----
-
-## 6. 同一条 $\rho(t)$ 也可以由 SDE 实现
-
-### 6.1 本章要证明什么
-
-第 4 章已经从随机插值得到目标边际密度 $\rho(t,x)$ 和条件平均速度场 $u(t,x)$，并证明它们满足连续性方程
-
-$$
-\boxed{
-\partial_t\rho(t,x)
-\mathbin{+}
-\nabla\cdot\bigl(\rho(t,x)u(t,x)\bigr)
-\mathrel{=}
-0,
-\qquad
-\rho(0,x)=\rho_0(x).
-}
-\tag{6.1}
-$$
-
-第 5 章进一步说明：由同一个速度场驱动的 ODE
-
-$$
-\dot X_t=u(t,X_t)
-$$
-
-可以实现这条边际密度路径。
-
-本章要回答一个新的问题：
-
-> 能否在轨迹中加入布朗噪声，同时仍让每个时刻的边际密度保持为 $\rho(t,x)$？
-
-答案是可以，但不能只在 ODE 上直接加噪声。随机扩散会摊平密度，因此还需要在漂移中加入一个由 score 决定的补偿项。
-
-本章将构造 SDE $Z_t$，记它的实际密度为 $p(t,x)$，并证明
-
-$$
-\boxed{
-p(t,x)=\rho(t,x).
-}
-$$
-
-沿用第 1 章的记号：$x_t$、$X_t$、$Z_t$ 分别表示随机插值、生成 ODE 和本章构造的 SDE，它们的密度分别记为 $\rho$、$q$和 $p$。
-
-证明路线是：
-
-1. 先推导本章采用的各向同性加性噪声 SDE 的 Fokker--Planck 方程；
-2. 再要求它在密度为 $\rho$ 时具有与 ODE 相同的概率流量 $\rho u$；
-3. 由此反推出合适的漂移；
-4. 最后用相同 PDE、相同初值和解的唯一性证明 $p=\rho$。
-
-### 6.2 SDE 的符号与尺度
-
-#### 随机状态、空间位置和密度
-
-- $Z_t\in\mathbb R^d$ 是时刻 $t$ 的随机状态；
-- $x\in\mathbb R^d$ 是确定的空间位置，是密度和向量场的自变量；
-- $p(t,x)$ 是 $Z_t$ 的实际密度，即 $Z_t\sim p(t,\cdot)$；
-- $\rho(t,x)$ 是随机插值预先规定的目标密度。
-
-在证明结束以前，$p$ 和 $\rho$ 必须严格区分：$p$ 是 SDE 实际产生的未知密度，$\rho$ 是希望它实现的候选密度。
-
-#### 布朗运动
-
-令 $W_t\in\mathbb R^d$ 为 $d$ 维标准 Wiener 过程，也称标准布朗运动。对有限的小时间步 $\Delta t>0$，
-
-$$
-\Delta W_t
-:=
-W_{t+\Delta t}-W_t
-\sim
-\mathcal N(0,\Delta t\,\mathrm{Id}),
-$$
-
-其中 $\mathrm{Id}$ 是 $d\times d$ 单位矩阵。等价地，
-
-$$
-\Delta W_t
-\overset{\mathrm d}{=}
-\sqrt{\Delta t}\,\xi,
-\qquad
-\xi\sim\mathcal N(0,\mathrm{Id}),
-$$
-
-这里 $\overset{\mathrm d}{=}$ 表示两边分布相同。
-
-> **备注：为什么这两种写法等价？**
+> **备注：为什么“对任意测试函数积分为零”能推出括号里的函数为零？**
 >
-> 先看一维情形。根据标准布朗运动的定义，长度为 $\Delta t$ 的时间区间对应的增量满足
+> 令
+>
 
 $$
-\Delta W_t\sim\mathcal N(0,\Delta t).
+h(t,x)
+\mathrel{=}
+\partial_t\rho(t,x)+\nabla\cdot(\rho b)(t,x).
 $$
 
 >
-> 另取一个标准高斯随机变量 $\xi\sim\mathcal N(0,1)$，并定义
+> 如果某个区域内 $h$ 明显为正，就可以选择一个在该区域内为正、其他地方为零的光滑测试函数 $\varphi$，此时 $\int\varphi h\,\mathrm dx$ 会大于零，与“对所有 $\varphi$ 都等于零”矛盾。$h$ 为负的情况同理。因此 $h=0$，至少在几乎处处或分布意义下成立。这种先与任意测试函数积分的证明叫作弱形式证明。
 
-$$
-Y:=\sqrt{\Delta t}\,\xi.
-$$
-
-> 高斯随机变量乘以常数后仍是高斯随机变量。$Y$ 的均值和方差分别为
-
-$$
-\mathbb E[Y]=\sqrt{\Delta t}\,\mathbb E[\xi]=0,
-\qquad
-\operatorname{Var}(Y)
-=\operatorname{Var}\!\left(\sqrt{\Delta t}\,\xi\right)
-=\left(\sqrt{\Delta t}\right)^2\operatorname{Var}(\xi)
-=\Delta t\,\operatorname{Var}(\xi)
-=\Delta t.
-$$
-
+> **备注：连续性方程在说什么？**
+>
+> $\rho b$ 是概率流量。某个区域的概率密度下降，是因为从该区域流出的概率多于流入的概率。
+>
 > 因此
-
-$$
-\sqrt{\Delta t}\,\xi
-\sim
-\mathcal N(0,\Delta t).
-$$
-
-> 它与 $\Delta W_t$ 的分布完全相同，所以可以写成
-
-$$
-\Delta W_t
-\overset{\mathrm d}{=}
-\sqrt{\Delta t}\,\xi.
-$$
-
-> $d$ 维情形就是将这个结论分别用到每个相互独立的坐标分量，因此协方差矩阵为 $\Delta t\,\mathrm{Id}$。
 >
-> 这也是数值模拟布朗运动的方法：每走一个长度为 $\Delta t$ 的时间步，就重新采样一个独立的标准高斯随机变量，再乘以 $\sqrt{\Delta t}$ 作为该步的布朗增量。
->
-> 需要注意，$\overset{\mathrm d}{=}$ 只表示两边的概率分布相同，不表示两个随机变量在每一次采样时都取到相同数值。
-
-因此布朗增量是 $\sqrt{\Delta t}$ 量级，而不是 $\Delta t$ 量级。符号 $\mathrm dW_t$ 是布朗增量的连续时间记号，不能理解成 $\dot W_t\,\mathrm dt$，因为布朗轨迹几乎处处不可微。
-
-#### 漂移和噪声幅度
-
-本章考虑如下具有各向同性加性噪声的 SDE：
 
 $$
-\boxed{
-\mathrm dZ_t
-\mathrel{=}
-b(t,Z_t)\,\mathrm dt
+\text{局部密度变化}
 \mathbin{+}
-\sigma(t)\,\mathrm dW_t,
-\qquad
-\sigma(t)\ge0.
-}
-\tag{6.2}
-$$
-
-本文统一按 Itô 意义理解 SDE。
-
-式中：
-
-- $b(t,x)\in\mathbb R^d$ 是漂移速度，控制随机状态的平均移动方向；
-- $\sigma(t)\ge0$ 是直接乘在布朗增量上的**噪声幅度**；
-- $\sigma(t)=0$ 表示该时刻不加入新噪声；
-- $\sigma(t)$ 越大，单位时间内随机增量的方差越大，单条轨迹越随机。
-
-为了简化推导，本章只考虑 $\sigma$ 依赖时间、且所有空间方向使用相同噪声幅度的情形，因此扩散是各向同性的。
-
-在一个很小但有限的时间步内，给定 $Z_t=x$，Euler--Maruyama 近似进行数值求解
-
-$$
-Z_{t+\Delta t}-Z_t
-\approx
-b(t,x)\Delta t
-\mathbin{+}
-\sigma(t)\sqrt{\Delta t}\,\xi,
-\qquad
-\xi\sim\mathcal N(0,\mathrm{Id}).
-\tag{6.3}
-$$
-
-所以
-
-$$
-\begin{aligned}
-\mathbb E[Z_{t+\Delta t}-Z_t\mid Z_t=x]
-&\approx
-b(t,x)\Delta t,
-\\
-\operatorname{Cov}(Z_{t+\Delta t}-Z_t\mid Z_t=x)
-&\approx
-\sigma^2(t)\Delta t\,\mathrm{Id}.
-\end{aligned}
-\tag{6.4}
-$$
-
-这说明 $b$ 控制平均位移，而 $\sigma$ 直接控制随机增量的标准差。
-
-### 6.3 具有各向同性加性噪声的 SDE 的 Fokker--Planck 方程
-
-先给出本节结论。对于式 (6.2)
-
-$$
-\mathrm dZ_t
-\mathrel{=}
-b(t,Z_t)\,\mathrm dt
-\mathbin{+}
-\sigma(t)\,\mathrm dW_t,
-$$
-
-如果 $Z_t$ 的密度为 $p(t,x)$，那么它满足
-
-$$
-\boxed{
-\partial_t p
-\mathrel{=}
--\nabla\cdot(bp)
-\mathbin{+}
-\frac12\sigma^2(t)\Delta p.
-}
-$$
-
-这个方程称为 Fokker--Planck 方程。它描述的不是单条随机轨迹，而是大量 SDE 轨迹形成的概率密度如何随时间变化：
-
-- $-\nabla\cdot(bp)$ 是漂移造成的概率输运；
-- $\tfrac12\sigma^2\Delta p$ 是噪声造成的概率扩散。
-
-本节中 $\sigma(t)$ 是只依赖时间的标量，因此噪声在各个空间方向上强度相同。下面先在一维中推导，再推广到 $d$ 维。
-
-#### 一维小时间步推导
-
-先考虑一维 SDE
-
-$$
-\mathrm dZ_t
-\mathrel{=}
-b(t,Z_t)\,\mathrm dt
-\mathbin{+}
-\sigma(t)\,\mathrm dW_t.
-$$
-
-取一个很小的时间步 $h>0$。给定 $Z_t=x$，式 (6.3) 给出
-
-$$
-\Delta Z
-:=
-Z_{t+h}-Z_t
-\approx
-b(t,x)h
-\mathbin{+}
-\sigma(t)\sqrt h\,\xi,
-\qquad
-\xi\sim\mathcal N(0,1).
-$$
-
-因为 $\mathbb E[\xi]=0$ 且 $\mathbb E[\xi^2]=1$，所以
-
-$$
-\mathbb E[\Delta Z\mid Z_t=x]
-\mathrel{=}
-b(t,x)h,
-$$
-
-并且
-
-$$
-\begin{aligned}
-\mathbb E[(\Delta Z)^2\mid Z_t=x]
-&=
-\mathbb E\!\left[
-\bigl(bh+\sigma\sqrt h\,\xi\bigr)^2
-\right]
-\\
-&=
-b^2h^2+\sigma^2h
-\\
-&=
-\sigma^2h+o(h).
-\end{aligned}
-\tag{6.5}
-$$
-
-中间的交叉项期望为零，因为它含有 $\mathbb E[\xi]=0$；$b^2h^2$ 比 $h$ 更小，因此记入 $o(h)$。
-
-取光滑紧支撑测试函数 $\varphi\in C_c^\infty(\mathbb R)$。对 $\varphi(x+\Delta Z)$ 作二阶 Taylor 展开：
-
-$$
-\varphi(x+\Delta Z)-\varphi(x)
-\mathrel{=}
-\varphi'(x)\Delta Z
-\mathbin{+}
-\frac12\varphi''(x)(\Delta Z)^2
-\mathbin{+}
-o(h).
-$$
-
-给定 $Z_t=x$ 后取期望，并使用式 (6.5)：
-
-$$
-\begin{aligned}
-&\mathbb E[
-\varphi(Z_{t+h})-\varphi(Z_t)
-\mid Z_t=x
-]
-\\
-&\quad=
-\left[
-b(t,x)\varphi'(x)
-\mathbin{+}
-\frac12\sigma^2(t)\varphi''(x)
-\right]h
-+o(h).
-\end{aligned}
-$$
-
-再对 $Z_t$ 取总体期望，除以 $h$ 并令 $h\to0$，得到
-
-$$
-\frac{\mathrm d}{\mathrm dt}
-\mathbb E[\varphi(Z_t)]
-\mathrel{=}
-\mathbb E\!\left[
-b(t,Z_t)\varphi'(Z_t)
-\mathbin{+}
-\frac12\sigma^2(t)\varphi''(Z_t)
-\right].
-\tag{6.6}
-$$
-
-现在把式 (6.6) 两边都写成关于密度 $p(t,x)$ 的积分。因为
-
-$$
-\mathbb E[\varphi(Z_t)]
-\mathrel{=}
-\int_{\mathbb R}\varphi(x)p(t,x)\,\mathrm dx,
-$$
-
-而 $\varphi(x)$ 不依赖时间，所以在可以交换求导与积分的条件下，
-
-$$
-\begin{aligned}
-\int_{\mathbb R}\varphi(x)\partial_t p(t,x)\,\mathrm dx
-&=
-\frac{\mathrm d}{\mathrm dt}\mathbb E[\varphi(Z_t)]
-\\
-&=
-\int_{\mathbb R}
-\left[
-b(t,x)\varphi'(x)
-\mathbin{+}
-\frac12\sigma^2(t)\varphi''(x)
-\right]
-p(t,x)\,\mathrm dx.
-\end{aligned}
-\tag{6.7}
-$$
-
-这就是式 (6.7) 左边的来源：密度 $p(t,x)$ 随时间变化，使测试函数的平均值 $\mathbb E[\varphi(Z_t)]$ 也随之变化。
-
-对右边第一项分部积分一次，对第二项分部积分两次。由于 $\varphi$ 具有紧支撑，边界项为零：
-
-$$
-\begin{aligned}
-\int_{\mathbb R}b\varphi'p\,\mathrm dx
-&=
--\int_{\mathbb R}\varphi\,\partial_x(bp)\,\mathrm dx,
-\\
-\int_{\mathbb R}\varphi''p\,\mathrm dx
-&=
-\int_{\mathbb R}\varphi\,\partial_{xx}p\,\mathrm dx.
-\end{aligned}
-$$
-
-代回式 (6.7)，得到
-
-$$
-\int_{\mathbb R}\varphi(x)
-\left[
-\partial_t p
-\mathbin{+}
-\partial_x(bp)
-\mathbin{-}
-\frac12\sigma^2\partial_{xx}p
-\right](t,x)\,\mathrm dx
+\text{局部净流出}
 =0.
 $$
 
-因为测试函数 $\varphi$ 可以任意选择，所以只能有
+---
 
-$$
-\boxed{
-\partial_t p
-\mathrel{=}
--\partial_x(bp)
-\mathbin{+}
-\frac12\sigma^2(t)\partial_{xx}p.
-}
-\tag{6.8}
-$$
+## 6. score 从哪里来
 
-#### 推广到 $d$ 维
-
-在 $d$ 维中，给定 $Z_t=x$，小时间步增量满足
-
-$$
-\begin{aligned}
-\mathbb E[\Delta Z\mid Z_t=x]
-&=
-b(t,x)h,
-\\
-\mathbb E[\Delta Z\Delta Z^{\mathsf T}\mid Z_t=x]
-&=
-\sigma^2(t)h\,\mathrm{Id}+o(h).
-\end{aligned}
-\tag{6.9}
-$$
-
-对二阶 Taylor 项取期望时，不同噪声坐标之间的交叉项为零，只留下 Hessian 对角线元素之和：
-
-$$
-\operatorname{tr}(\nabla^2\varphi)
-\mathrel{=}
-\Delta\varphi.
-$$
-
-因此，一维推导中的导数相应变为
-
-$$
-\varphi'\longrightarrow\nabla\varphi,
-\qquad
-\varphi''\longrightarrow\Delta\varphi,
-\qquad
-\partial_x(bp)\longrightarrow\nabla\cdot(bp).
-$$
-
-最终得到
-
-$$
-\boxed{
-\partial_t p
-\mathrel{=}
--\nabla\cdot(bp)
-\mathbin{+}
-\frac12\sigma^2(t)\Delta p.
-}
-\tag{6.10}
-$$
-
-其中，系数 $\tfrac12$ 来自二阶 Taylor 展开，Laplace 算子来自各个独立噪声坐标的二阶导数之和。这就是 Fokker--Planck 方程。
-
-### 6.4 定义 score，并构造保持 $\rho$ 的 SDE
-
-第 6.3 节表明，布朗噪声会在密度方程中产生扩散项。为了设计抵消这个扩散项的漂移，需要知道目标密度 $\rho(t,x)$ 在每个位置朝哪个方向增大。这个方向由 score 给出。
-
-假设 $\rho(t,x)>0$ 且足够光滑，定义
+定义中间密度的 score：
 
 $$
 \boxed{
@@ -1320,412 +649,252 @@ s(t,x)
 :=
 \nabla_x\log\rho(t,x).
 }
-\tag{6.11}
+\tag{6.1}
 $$
 
-score 是一个 $d$ 维向量。它的物理含义是：
+对于
 
-- 方向：指向当前位置附近密度上升最快的方向；
-- 大小：表示附近密度变化得有多快；
-- 在密度的局部峰顶，score 为零。
+$$
+x_t=I(t,x_0,x_1)+\gamma(t)z,
+$$
 
-> **备注：为什么 score 不是速度？**
+固定 $(x_0,x_1)$ 后，$x_t$ 是一个高斯随机变量：
+
+$$
+x_t\mid(x_0,x_1)
+\sim
+\mathcal N\left(
+I(t,x_0,x_1),
+\gamma^2(t)\mathrm{Id}
+\right).
+$$
+
+该条件高斯的 score 是
+
+$$
+-\frac{x-I(t,x_0,x_1)}{\gamma^2(t)}.
+$$
+
+> **备注：高斯分布的 score 为什么是这个形式？**
 >
-> 二者分别对不同变量求导：
-
-$$
-s(t,x)
-\mathrel{=}
-\nabla_x\log\rho(t,x)
-\qquad\text{是对空间位置 }x\text{ 求导},
-$$
-
-> 而
-
-$$
-u(t,x)
-\qquad\text{描述}\qquad
-\frac{\mathrm dX_t}{\mathrm dt}
-\mathrel{=}
-u(t,X_t),
-$$
-
-> 是样本对时间的变化率。score 只说明“往哪个空间方向密度会升高”，并没有规定样本必须沿该方向移动。
-
-由链式法则，
-
-$$
-s(t,x)
-\mathrel{=}
-\frac{\nabla_x\rho(t,x)}{\rho(t,x)}.
-$$
-
-因此
-
-$$
-\boxed{
-\rho(t,x)s(t,x)
-\mathrel{=}
-\nabla_x\rho(t,x).
-}
-\tag{6.12}
-$$
-
-这个等式是后面证明漂移与扩散相互抵消的关键。
-
-> **备注：Gaussian 分布的 score。**
+> 对一般各向同性高斯
 >
-> 例如，若
 
 $$
-\rho(x)=\mathcal N(\mu,\alpha^2\mathrm{Id}),
+p(x)
+\mathrel{=}
+\frac{1}{(2\pi\alpha^2)^{d/2}}
+\exp\!\left(
+-\frac{\|x-\mu\|^2}{2\alpha^2}
+\right),
 $$
 
-> 那么
+>
+> 先取对数：
+>
 
 $$
-s(x)
+\log p(x)
+\mathrel{=}
+\text{与 }x\text{ 无关的常数}
+\mathbin{-}
+\frac{\|x-\mu\|^2}{2\alpha^2}.
+$$
+
+>
+> 再对 $x$ 求梯度：
+>
+
+$$
+\nabla_x\log p(x)
 \mathrel{=}
 -\frac{x-\mu}{\alpha^2}
 \mathrel{=}
 \frac{\mu-x}{\alpha^2}.
 $$
 
-> 所以 Gaussian 的 score 总是指向分布中心 $\mu$：离中心越远，指向中心的作用越强。
+>
+> 所以高斯 score 总是指向均值 $\mu$，并且离均值越远，向中心的指向越强。这里令 $\mu=I(t,x_0,x_1)$、$\alpha=\gamma(t)$，就得到上式。
 
-这里的 $s(t,x)$ 是目标密度 $\rho(t,x)$ 的 score，不是 SDE 实际密度 $p(t,x)$ 的 score。后面将它乘以 $\tfrac12\sigma^2(t)$，作为抵消布朗扩散的补偿漂移。
+在随机样本 $x=x_t$ 上，
 
-#### 构造漂移并证明边际不变
+$$
+x_t-I(t,x_0,x_1)=\gamma(t)z,
+$$
 
-根据第 6.3 节的 Fokker--Planck 方程，直接在漂移 $u$ 上加入布朗噪声会额外产生扩散项，通常会改变目标密度路径。为了简化公式，定义扩散率
+所以条件 score 标签可以写成
+
+$$
+-\frac{z}{\gamma(t)}.
+$$
+
+对隐藏端点和高斯变量做条件平均，得到边际 score：
 
 $$
 \boxed{
-\kappa(t)
+s(t,x)
+\mathrel{=}
+-\frac1{\gamma(t)}
+\mathbb E[z\mid x_t=x],
+\qquad 0<t<1.
+}
+\tag{6.2}
+$$
+
+> **备注：score 的物理意义是什么？**
+>
+> 固定时刻 $t$，可以把 $\rho(t,x)$ 看成空间中的一张概率密度地形。由
+>
+
+$$
+s(t,x)
+\mathrel{=}
+\nabla_x\log\rho(t,x)
+\mathrel{=}
+\frac{\nabla_x\rho(t,x)}{\rho(t,x)},
+$$
+
+>
+> score 的方向是当前位置上对数密度增长最快的方向，也就是局部指向“更可能出现样本”的区域。因此，沿着 $s$ 移动会使密度在一阶近似下增加得最快；
+
+
+定义 denoiser
+
+$$
+\boxed{
+\eta_z(t,x)
 :=
-\frac{\sigma^2(t)}{2}
-\ge0,
-\qquad
-\sigma(t)=\sqrt{2\kappa(t)}.
+\mathbb E[z\mid x_t=x].
 }
+\tag{6.3}
 $$
 
-于是 SDE 密度 $p$ 的 Fokker--Planck 方程为
-
-$$
-\partial_t p
-\mathrel{=}
--\nabla\cdot(bp)
-\mathbin{+}
-\kappa\Delta p.
-$$
-
-因为 $\kappa$ 只依赖时间，
-
-$$
-\partial_t p
-\mathrel{=}
--\nabla\cdot\bigl(bp-\kappa\nabla p\bigr).
-$$
-
-因此 SDE 的总概率流量是
-
-$$
-J_p=bp-\kappa\nabla p.
-$$
-
-目标密度已经满足连续性方程
-
-$$
-\partial_t\rho
-\mathrel{=}
--\nabla\cdot(u\rho),
-$$
-
-对应的目标概率流量是 $u\rho$。若希望 SDE 在密度为 $\rho$ 时具有相同流量，一个直接的选择是
+则
 
 $$
 \boxed{
-b(t,x)\rho(t,x)
-\mathbin{-}
-\kappa(t)\nabla\rho(t,x)
-\mathrel{=}
-u(t,x)\rho(t,x).
+s(t,x)=-\frac{\eta_z(t,x)}{\gamma(t)}.
 }
-\tag{6.13}
+\tag{6.4}
 $$
 
-利用式 (6.12) 的 $\rho s=\nabla\rho$，在 $\rho>0$ 的位置上得到
+> **备注：为什么叫 denoiser？**
+>
+> 网络看到被高斯变量扰动后的 $x_t$，并预测产生该样本的平均高斯变量。知道平均噪声后，就能反推出更干净的中心位置或数据端点估计。
+
+---
+
+## 7. 论文中的关键速度分解
+
+除了总速度 $b$，再定义只对确定性插值部分求条件平均的速度
+
+$$
+\boxed{
+v(t,x)
+:=
+\mathbb E[
+\partial_tI(t,x_0,x_1)
+\mid x_t=x
+].
+}
+\tag{7.1}
+$$
+
+由式 (4.1)，
+
+$$
+b(t,x)
+\mathrel{=}
+v(t,x)
+\mathbin{+}
+\dot\gamma(t)\mathbb E[z\mid x_t=x].
+$$
+
+再使用
+
+$$
+\mathbb E[z\mid x_t=x]
+\mathrel{=}
+-\gamma(t)s(t,x),
+$$
+
+得到
 
 $$
 \boxed{
 b(t,x)
 \mathrel{=}
-u(t,x)+\kappa(t)s(t,x).
+v(t,x)
+\mathbin{-}
+\gamma(t)\dot\gamma(t)s(t,x).
 }
-\tag{6.14}
+\tag{7.2}
 $$
 
-这里只要求额外概率流的散度为零即可，因此漂移并非绝对唯一；式 (6.14) 是让两股额外流量逐点抵消的最直接选择。
+这是连接 velocity、score 和 latent noise 的关键公式。
 
-将式 (6.14) 和 $\sigma=\sqrt{2\kappa}$ 代回 SDE：
+它说明：
 
-$$
-\boxed{
-\mathrm dZ_t
-\mathrel{=}
-\bigl(u+\kappa s\bigr)(t,Z_t)\,\mathrm dt
-\mathbin{+}
-\sqrt{2\kappa(t)}\,\mathrm dW_t,
-\qquad
-Z_0\sim\rho_0.
-}
-\tag{6.15}
-$$
+- $v$ 描述确定性插值中心的平均移动；
+- $-\gamma\dot\gamma s$ 描述插值噪声尺度变化对概率流的贡献；
+- 真正放进概率流 ODE 的速度是二者之和 $b$。
 
-记该 SDE 的实际密度为 $p(t,x)$。由 Fokker--Planck 方程，
-
-$$
-\begin{cases}
-\partial_t p
-\mathrel{=}
--\nabla\cdot\bigl((u+\kappa s)p\bigr)
-\mathbin{+}
-\kappa\Delta p,
-\\
-p(0,x)=\rho_0(x).
-\end{cases}
-$$
-
-下面验证目标密度 $\rho$ 也满足同一个方程。由式 (6.12)，
-
-$$
-\nabla\cdot(\rho s)
-\mathrel{=}
-\nabla\cdot(\nabla\rho)
-\mathrel{=}
-\Delta\rho.
-\tag{6.16}
-$$
-
-因此
-
-$$
-\begin{aligned}
-&-\nabla\cdot\bigl((u+\kappa s)\rho\bigr)
-+\kappa\Delta\rho
-\\
-&\quad=
--\nabla\cdot(u\rho)
--\kappa\nabla\cdot(\rho s)
-+\kappa\Delta\rho
-\\
-&\quad=
--\nabla\cdot(u\rho)
--\kappa\Delta\rho
-+\kappa\Delta\rho
-\\
-&\quad=
--\nabla\cdot(u\rho)
-\\
-&\quad=
-\partial_t\rho.
-\end{aligned}
-\tag{6.17}
-$$
-
-最后一个等号使用了目标连续性方程。这里没有预先假设 $p=\rho$，只是把候选函数 $\rho$ 代入 $p$ 的方程，验证它也是一个解。
-
-现在 $p$ 与 $\rho$ 满足同一个 Fokker--Planck 方程，并具有同一个初值 $\rho_0$。在 $u,s,\kappa$ 具有适当正则性、相应初值问题的解唯一时，
-
-$$
-\boxed{
-p(t,x)=\rho(t,x).
-}
-\tag{6.18}
-$$
-
-特别地，
-
-$$
-Z_1\sim p(1,\cdot)=\rho(1,\cdot)=\rho_1.
-$$
-
-式 (6.17) 的核心就是：score 补偿漂移产生的流量与布朗扩散流量逐点抵消，
-
-$$
-\underbrace{+\kappa\rho s}_{+\kappa\nabla\rho}
-\mathbin{+}
-\underbrace{(-\kappa\nabla\rho)}_{\text{布朗扩散流量}}
-=0,
-$$
-
-所以最终只剩目标概率流量 $\rho u$。
-
-$\kappa$ 可以看成轨迹随机性的旋钮：
-
-- $\kappa(t)=0$ 时，式 (6.15) 退化为概率流 ODE；
-- $\kappa(t)>0$ 时，单条轨迹具有随机性，但理想边际仍然是 $\rho(t)$；
-- 不同的非负函数 $\kappa(t)$ 给出不同的随机轨迹族，却可以共享同一条边际密度路径。
-
-### 6.5 前向 SDE、反向 SDE 与 ODE
-
-对于概率流 ODE
-
-$$
-\frac{\mathrm dX_t}{\mathrm dt}=u(t,X_t),
-$$
-
-同一个速度场 $u(t,x)$ 既可沿 $t:0\to1$ 正向积分，也可沿 $t:1\to0$ 反向积分；ODE 的反向运行可以直接复用正向速度场，不需要重新推导一个反向速度场。若改用递增的反向时钟 $\tau=1-t$，则反向方程等价地写成
-
-$$
-\frac{\mathrm d\widetilde X_\tau}{\mathrm d\tau}
-\mathrel{=}
--u(1-\tau,\widetilde X_\tau).
-$$
-
-SDE 则不同：随机扩散会改变反向时间的漂移，因此不能只把时间步改成负数，而必须加入由 score 决定的反向漂移修正。
-
-沿 $t:0\to1$ 运行的前向 SDE 是
-
-$$
-\mathrm dZ_t
-\mathrel{=}
-\bigl(u+\kappa s\bigr)(t,Z_t)\,\mathrm dt
-\mathbin{+}
-\sqrt{2\kappa(t)}\,\mathrm dW_t.
-$$
-
-它在时刻 $t$ 的 score 正是 $s(t,x)=\nabla\log\rho(t,x)$。对扩散系数 $\sqrt{2\kappa}$，反向时间漂移等于
-
-$$
-\begin{aligned}
-b_{\mathrm{rev}}
-&=
-b_{\mathrm{fwd}}-2\kappa s
-\\
-&=
-(u+\kappa s)-2\kappa s
-\\
-&=
-u-\kappa s.
-\end{aligned}
-$$
-
-因此，若仍使用变量 $t$，但从 $t=1$ 向 $t=0$ 积分，反向 SDE 写成
-
-$$
-\boxed{
-\mathrm dZ_t
-\mathrel{=}
-\bigl(u-\kappa s\bigr)(t,Z_t)\,\mathrm dt
-\mathbin{+}
-\sqrt{2\kappa(t)}\,\mathrm d\overline W_t,
-\qquad
-t:1\longrightarrow0.
-}
-\tag{6.19}
-$$
-
-这里 $\overline W_t$ 表示反向时间 Wiener 过程。式 (6.19) 中的时间步 $\mathrm dt$ 为负；不能把它当作沿正时间方向运行的普通 SDE。
-
-如果希望始终使用递增时间，可以定义反向时钟
-
-$$
-\tau=1-t,
-\qquad
-\widetilde Z_\tau=Z_{1-\tau}.
-$$
-
-那么 $\tau:0\to1$，相应方程为
-
-$$
-\mathrm d\widetilde Z_\tau
-\mathrel{=}
-\left[
--u+\kappa s
-\right](1-\tau,\widetilde Z_\tau)\,\mathrm d\tau
-\mathbin{+}
-\sqrt{2\kappa(1-\tau)}\,\mathrm d\widetilde W_\tau.
-$$
-
-总结如下：
-
-| 动力学 | 运行方向 | 漂移 | 单条轨迹 | 理想边际 |
-|---|---|---|---|---|
-| 概率流 ODE | $0\to1$ | $u$ | 给定初值后确定 | $\rho(t)$ |
-| 前向 SDE | $0\to1$ | $u+\kappa s$ | 随机 | $\rho(t)$ |
-| 反向 SDE | $1\to0$ | $u-\kappa s$，配合负的 $\mathrm dt$ | 随机 | 反向经过同一组 $\rho(t)$ |
-
-需要强调的是：
-
-$$
-\boxed{
-\text{三种动力学的单条轨迹通常不同；相同的是相应时刻的边际密度。}
-}
-$$
-
-本章的核心结论可以压缩为
-
-$$
-\boxed{
-\text{布朗扩散}
-\mathbin{+}
-\text{score 漂移补偿}
-\mathrel{=}
-\text{不改变目标边际概率流}.
-}
-$$
-
-![同一边际概率路径的 ODE 与 SDE 实现](assets/unified-diffusion/stochastic-interpolant-ode-sde.png)
-
-*图 1：左侧 ODE 的单条轨迹在给定初值后是确定的，右侧 SDE 的单条轨迹由布朗噪声驱动而不规则波动；两者在每个时刻却可以共享同一边际密度 $\rho(t)$。图源：Albergo、Boffi、Vanden-Eijnden，[*Stochastic Interpolants: A Unifying Framework for Flows and Diffusions*，Figure 1](https://arxiv.org/html/2303.08797v4#S1.F1)。*
+> **备注：为什么要区分 $b$ 和 $v$？**
+>
+> 当 $\gamma$ 随时间变化时，只学习 $\partial_tI$ 的条件平均并不能得到完整边际速度。高斯扰动本身的收缩或扩张也会推动密度变化，因此还需要 score 修正项。
+>
+> 当 $\gamma=0$ 时，式 (7.2) 退化为 $b=v$，这正是后面的 endpoint Flow Matching。
 
 ---
 
-## 7. 平方回归：为什么随机标签可以学习出确定速度场
+## 8. 为什么平方回归能够学习这些场
 
-### 7.1 条件期望是平方损失的最优预测
+### 8.1 学习总速度 $b$
 
-令神经网络 $u_\theta(t,x)$ 逼近速度场。考虑均方损失
+训练网络 $b_\theta(t,x)$，使用
 
 $$
 \boxed{
-\mathcal J_{\mathrm{vel}}(\theta)
+\mathcal L_b(\theta)
 \mathrel{=}
-\mathbb E_{t,x_0,x_1,z}
-\left[
+\mathbb E
 \left\|
-u_\theta(t,x_t)-Y_t
-\right\|^2
-\right].
+b_\theta(t,x_t)
+\mathbin{-}
+\left[
+\partial_tI(t,x_0,x_1)+\dot\gamma(t)z
+\right]
+\right\|^2.
 }
-\tag{7.1}
+\tag{8.1}
 $$
 
-其中通常取
+平方损失的最优预测是条件期望，因此在理想函数类中，
 
 $$
-t\sim\mathrm{Unif}(0,1),
+b_\theta^*(t,x)
+\mathrel{=}
+\mathbb E[Y_t\mid x_t=x]
+\mathrel{=}
+b(t,x).
 $$
 
-并按式 (2.1) 构造
-
-$$
-x_t=I(t,x_0,x_1)+\gamma(t)z,
-$$
-
-按式 (3.1) 构造随机速度标签
+> **备注：为什么平方损失的最优解一定是条件平均？**
+>
+> 关键是网络只看到 $(t,x_t)$，看不到产生该样本的隐藏端点 $(x_0,x_1)$ 和高斯变量 $z$。固定时间 $t$ 和位置 $x_t=x$ 后，网络只能输出一个确定向量。把这个待选择的输出记为 $a$。
+>
+> 在所有满足 $x_t=x$ 的训练样本中，随机速度标签
+>
 
 $$
 Y_t
 \mathrel{=}
-\partial_tI(t,x_0,x_1)+\dot\gamma(t)z.
+\partial_tI(t,x_0,x_1)+\dot\gamma(t)z
 $$
 
-为什么训练随机标签 $Y_t$，最后却能得到一个确定的速度场？关键是：网络只看到 $(t,x_t)$，看不到产生该样本的隐藏端点和高斯变量。对于固定的时间 $t$ 和位置 $x_t=x$，网络只能输出一个确定向量。把这个待选择的输出记作 $a$。
-
-在所有满足 $x_t=x$ 的样本中，速度标签 $Y_t$ 可能各不相同。此时需要选择 $a$，使这些样本的平均平方距离
+>
+> 可能各不相同。对于当前位置，网络要选择 $a$，使这些标签到 $a$ 的条件平均平方距离
+>
 
 $$
 \ell(a)
@@ -1736,7 +905,9 @@ $$
 \right]
 $$
 
-尽可能小。对向量 $a$ 求梯度：
+>
+> 尽可能小。对向量 $a$ 求梯度：
+>
 
 $$
 \begin{aligned}
@@ -1749,164 +920,784 @@ $$
 \\
 &=
 2\left(
-a-
-\mathbb E[Y_t\mid x_t=x]
+a-\mathbb E[Y_t\mid x_t=x]
 \right).
 \end{aligned}
-\tag{7.2}
 $$
 
-令梯度等于零，得到使平均平方距离最小的输出：
-
-$$
-a^*
-\mathrel{=}
-\mathbb E[Y_t\mid x_t=x].
-$$
-
-这里是最小值而不是最大值，因为平方距离关于 $a$ 是开口向上的二次函数。
-
-> **备注：为什么是取平均？**
 >
-> 假设在同一个 $(t,x)$ 处，训练样本给出的三个一维速度标签分别是 $8,10,12$。网络面对相同输入只能输出同一个数。输出它们的平均值 $10$，会使三个平方距离之和
-
-$$
-(a-8)^2+(a-10)^2+(a-12)^2
-$$
-
-> 达到最小。条件期望 $\mathbb E[Y_t\mid x_t=x]$ 就是在连续随机情形下进行这种“分组后取平均”。
-
-令 $a=u_\theta(t,x)$，再把所有时间和位置合在一起，得到总体最优解
+> 令梯度等于零，得到
+>
 
 $$
 \boxed{
-u_\theta^*(t,x)
+a^*
 \mathrel{=}
 \mathbb E[Y_t\mid x_t=x]
 \mathrel{=}
-u(t,x).
+b(t,x).
 }
-\tag{7.3}
 $$
 
-这正是“随机监督标签为什么仍能训练出确定速度场”的原因：平方回归会把同一 $(t,x)$ 对应的随机标签取平均，最终输出条件平均速度 $u(t,x)$。
-
-### 7.2 实际训练步骤
-
-一次无偏的随机训练迭代可以写成：
-
-1. 采样 $t\sim\mathrm{Unif}(0,1)$；
-2. 采样 $(x_0,x_1)\sim\nu$；
-3. 采样 $z\sim\mathcal N(0,\mathrm{Id})$；
-4. 构造
-
-   $$
-   x_t=I(t,x_0,x_1)+\gamma(t)z;
-   $$
-
-5. 构造监督标签
-
-   $$
-   Y_t=\partial_tI(t,x_0,x_1)+\dot\gamma(t)z;
-   $$
-
-6. 最小化
-
-   $$
-   \|u_\theta(t,x_t)-Y_t\|^2.
-   $$
-
-训练阶段只需要从端点分布和高斯分布采样，不需要知道中间密度 $\rho(t,x)$，也不需要显式计算
+>
+> 这是最小值，因为平方距离关于 $a$ 是开口向上的凸二次函数。因此，令 $a=b_\theta(t,x)$ 并对所有时间和位置共同训练，平方回归就会把同一 $(t,x)$ 对应的随机速度标签取条件平均，最终得到确定速度场 $b(t,x)$。
+>
+> 一维直观例子：假设同一个 $(t,x)$ 对应的三个速度标签分别是 $8,10,12$。网络面对相同输入只能输出同一个数。输出它们的平均值 $10$，会使平方距离之和
+>
 
 $$
-\mathbb E[Y_t\mid x_t=x].
+(a-8)^2+(a-10)^2+(a-12)^2,
 $$
 
-条件期望由平方回归自动实现。
+>
+> 达到最小。条件期望 $\mathbb E[Y_t\mid x_t=x]$ 就是连续随机情形下的这种“分组后取平均”。
 
-### 7.3 如何学习 score
+### 8.2 学习 denoiser 和 score
 
-第 6 章构造同边际 SDE 还需要目标密度的 score。对于
-
-$$
-x_t
-\mathrel{=}
-I(t,x_0,x_1)+\gamma(t)z,
-\qquad
-z\sim\mathcal N(0,\mathrm{Id}),
-$$
-
-在 $\gamma(t)\neq0$ 的内部时刻，给定 $(x_0,x_1)$ 后的条件密度是以 $I(t,x_0,x_1)$ 为中心、协方差为 $\gamma^2(t)\mathrm{Id}$ 的高斯分布。它的条件 score 为
-
-$$
--\frac{x_t-I(t,x_0,x_1)}{\gamma^2(t)}
-\mathrel{=}
--\frac{z}{\gamma(t)}.
-$$
-
-对所有可能的端点做条件平均，得到边际 score
+数值上更稳定的做法通常是学习
 
 $$
 \boxed{
-s(t,x)
-\mathrel{=}
--\frac1{\gamma(t)}
-\mathbb E[z\mid x_t=x].
-}
-\tag{7.4}
-$$
-
-因此可以使用平方回归目标
-
-$$
-\boxed{
-\mathcal J_{\mathrm{score}}(\theta)
+\mathcal L_\eta(\theta)
 \mathrel{=}
 \mathbb E
 \left\|
-s_\theta(t,x_t)
-\mathbin{+}
-\frac{z}{\gamma(t)}
+\eta_\theta(t,x_t)-z
 \right\|^2.
 }
-\tag{7.5}
+\tag{8.2}
 $$
 
-在理想函数类中，它的最优解就是式 (7.4) 的 $s(t,x)$。由于 $-z/\gamma(t)$ 在 $\gamma(t)\to0$ 时会放大，实际训练中也可以预测更稳定的条件平均噪声
+其理想最优解是
 
 $$
-\varepsilon_\theta(t,x)
-\approx
-\mathbb E[z\mid x_t=x],
+\eta_\theta^*(t,x)
+\mathrel{=}
+\mathbb E[z\mid x_t=x]
+\mathrel{=}
+\eta_z(t,x).
 $$
 
-再通过 $s_\theta=-\varepsilon_\theta/\gamma(t)$ 换算为 score。第 9 章扩散模型的噪声预测就是这一思路在高斯加噪路径上的具体形式。
+同样的平方损失分解说明：噪声网络学到的不是某一次采样中的具体 $z$，而是在观察到 $(t,x_t=x)$ 后最合理的平均噪声。单个 $x_t$ 可能由多个数据端点和多个噪声组合产生，网络只能对这些可能性做条件平均。
+
+再换算
+
+$$
+s_\theta(t,x)
+\mathrel{=}
+-\frac{\eta_\theta(t,x)}{\gamma(t)}.
+$$
+
+也可以直接回归 score 标签：
+
+$$
+\mathbb E
+\left\|
+s_\theta(t,x_t)+\frac{z}{\gamma(t)}
+\right\|^2.
+$$
+
+但当 $t$ 接近端点时，$\gamma(t)\to0$，标签 $z/\gamma(t)$ 可能很大。
+
+> **备注：实际训练怎样处理端点不稳定？**
+>
+> 常用方法包括：
+>
+> 1. 直接预测有界得多的 denoiser 或 noise；
+> 2. 不在精确端点采样时间；
+> 3. 对不同时间使用合适的 loss weighting；
+> 4. 对极端时间或极端系数进行截断。
+>
+> 本文只需要知道：理论上的 score 与实际网络参数化可以不同，但它们包含等价信息。
+
+### 8.3 一次基本训练迭代
+
+1. 采样时间 $t$；
+2. 采样端点 $(x_0,x_1)\sim\nu$；
+3. 采样 $z\sim\mathcal N(0,\mathrm{Id})$；
+4. 构造 $x_t=I(t,x_0,x_1)+\gamma(t)z$；
+5. 构造速度标签 $\partial_tI+\dot\gamma z$；
+6. 回归速度，或同时回归 denoiser。
+
+训练不需要显式计算中间密度 $\rho(t,x)$，也不需要手工计算条件期望。
+
+![论文图 3：训练与生成的算法流程](images/paper-figure-03-algorithm.png)
+
+*训练阶段可以同时看到端点和 latent noise，因此能构造监督标签；生成阶段只保留网络学到的时空场，从基分布出发求解 ODE 或另外构造的 SDE。来源：[论文 v4, Figure 3](https://arxiv.org/abs/2303.08797v4)。*
 
 ---
 
-## 8. Flow Matching 是上述框架的一个特例
+# 第三部分：从可学习的场得到生成动力学
 
-### 8.1 去掉额外高斯潜变量
+## 9. 概率流 ODE
+
+构造 ODE
+
+$$
+\boxed{
+\frac{\mathrm dX_t}{\mathrm dt}
+\mathrel{=}
+b(t,X_t),
+\qquad
+X_0\sim\rho_0.
+}
+\tag{9.1}
+$$
+
+记 $X_t$ 的密度为
+
+$$
+X_t\sim q(t,\cdot).
+$$
+
+与第 5 节相同，对测试函数使用链式法则可得
+
+$$
+\boxed{
+\partial_tq+\nabla\cdot(qb)=0.
+}
+\tag{9.2}
+$$
+
+随机插值密度满足
+
+$$
+\partial_t\rho+\nabla\cdot(\rho b)=0,
+\qquad
+\rho(0)=\rho_0,
+$$
+
+ODE 密度满足
+
+$$
+\partial_tq+\nabla\cdot(qb)=0,
+\qquad
+q(0)=\rho_0.
+$$
+
+在连续性方程初值问题具有唯一解时，
+
+$$
+\boxed{
+q(t,x)=\rho(t,x).
+}
+\tag{9.3}
+$$
+
+
+特别地，
+
+$$
+X_1\sim\rho_1.
+$$
+
+因此，训练时虽然借助了数据端点 $x_1$，生成时只需要从 $X_0\sim\rho_0$ 出发运行学习到的 ODE。
+
+---
+
+## 10. 同一条边际路径的 SDE
+
+这里必须先加一条逻辑限定：双端点插值直接给出的是 $\rho(t)$、$b(t,x)$ 和概率流 ODE，并没有产生每个小时间步的布朗增量。下面的 SDE 是在已知 $\rho,b,s$ 后，通过额外选择扩散强度 $\epsilon(t)$ 和布朗运动 $W_t$ 构造出来的另一种同边际动力学。
+
+如果对整条双端点插值轨迹固定同一个 $z$，它通常是可微曲线；而SDE轨迹几乎处处不可微。因此二者不可能是同一个路径过程，只可能在每个固定时刻拥有相同边际。
+
+### 10.1 Fokker--Planck 方程
+
+考虑
+
+$$
+\mathrm dZ_t
+\mathrel{=}
+a(t,Z_t)\,\mathrm dt
+\mathbin{+}
+g(t)\,\mathrm dW_t,
+$$
+
+其中 $W_t$ 是标准布朗运动，$g(t)$ 是瞬时噪声幅度。
+
+> **备注：SDE 中的 $\mathrm dW_t$ 应该怎样理解？**
+>
+> $\mathrm dW_t$ 不是普通可微函数的微分。把时间离散成一个很小的步长 $\Delta t$，布朗增量满足
+>
+
+$$
+\Delta W_t
+\mathrel{=}
+W_{t+\Delta t}-W_t
+\sim
+\mathcal N(0,\Delta t\,\mathrm{Id}).
+$$
+
+>
+> 若 $\xi\sim\mathcal N(0,\mathrm{Id})$，那么
+>
+
+$$
+\sqrt{\Delta t}\,\xi
+\sim
+\mathcal N(0,\Delta t\,\mathrm{Id}),
+$$
+
+>
+> 所以在分布意义下
+>
+
+$$
+\boxed{
+\Delta W_t
+\overset{\mathrm d}{=}
+\sqrt{\Delta t}\,\xi.
+}
+$$
+
+>
+> 因而 SDE 的一个 Euler 小步可以读成
+>
+
+$$
+Z_{t+\Delta t}
+\approx
+Z_t
+\mathbin{+}
+a(t,Z_t)\Delta t
+\mathbin{+}
+g(t)\sqrt{\Delta t}\,\xi.
+$$
+
+>
+> 漂移位移是 $\Delta t$ 量级，随机位移是 $\sqrt{\Delta t}$ 量级；并且每一步都要重新采样独立的 $\xi$。这正是它与整条插值共用同一个 $z$ 的根本区别。
+
+若 $Z_t$ 的密度为 $p(t,x)$，则
+
+$$
+\boxed{
+\partial_tp
+\mathrel{=}
+-\nabla\cdot(ap)
+\mathbin{+}
+\frac12g^2(t)\Delta p.
+}
+\tag{10.1}
+$$
+
+> **备注：Fokker--Planck 方程怎样从一个 SDE 小步得到？**
+>
+> 先看一维，并暂时把 $a=a(t,Z_t)$、$g=g(t)$ 写短。小步增量为
+>
+
+$$
+\Delta Z
+\mathrel{=}
+a\,\Delta t+g\sqrt{\Delta t}\,\xi,
+\qquad
+\mathbb E[\xi]=0,\quad
+\mathbb E[\xi^2]=1.
+$$
+
+>
+> 对光滑测试函数 $\varphi$ 做二阶 Taylor 展开：
+>
+
+$$
+\varphi(Z_t+\Delta Z)
+\mathrel{=}
+\varphi(Z_t)
+\mathbin{+}
+\varphi'(Z_t)\Delta Z
+\mathbin{+}
+\frac12\varphi''(Z_t)(\Delta Z)^2
+\mathbin{+}
+\text{更高阶项}.
+$$
+
+>
+> 条件于当前 $Z_t$ 取平均，有
+>
+
+$$
+\mathbb E[\Delta Z\mid Z_t]
+\mathrel{=}
+a\,\Delta t,
+$$
+
+>
+> 而
+>
+
+$$
+\mathbb E[(\Delta Z)^2\mid Z_t]
+\mathrel{=}
+g^2\Delta t+O((\Delta t)^2).
+$$
+
+>
+> 注意：随机增量本身是 $\sqrt{\Delta t}$ 量级，但平方后正好是 $\Delta t$ 量级，所以二阶项在连续极限中不会消失。除以 $\Delta t$ 并令 $\Delta t\to0$，得到
+>
+
+$$
+\frac{\mathrm d}{\mathrm dt}\mathbb E[\varphi(Z_t)]
+\mathrel{=}
+\mathbb E\!\left[
+a\,\varphi'(Z_t)
+\mathbin{+}
+\frac12g^2\varphi''(Z_t)
+\right].
+$$
+
+>
+> 再用密度 $p$ 写成积分，并分别做一次和两次分部积分：
+>
+
+$$
+\begin{aligned}
+\int a\varphi' p\,\mathrm dx
+&=
+-\int\varphi\,\partial_x(ap)\,\mathrm dx,
+\\
+\frac12g^2\int\varphi''p\,\mathrm dx
+&=
+\frac12g^2\int\varphi\,\partial_x^2p\,\mathrm dx.
+\end{aligned}
+$$
+
+>
+> 因为 $\varphi$ 任意，
+>
+
+$$
+\partial_tp
+\mathrel{=}
+-\partial_x(ap)
+\mathbin{+}
+\frac12g^2\partial_x^2p.
+$$
+
+>
+> 推广到 $d$ 维后，一阶空间导数变成散度，二阶导数之和变成 $\Delta$，于是得到式 (10.1)。
 
 令
 
 $$
-\gamma(t)=0,
+\epsilon(t):=\frac12g^2(t),
 \qquad
-x_t=I(t,x_0,x_1).
+g(t)=\sqrt{2\epsilon(t)}.
 $$
 
 则
 
 $$
-Y_t=\partial_tI(t,x_0,x_1),
+\partial_tp
+\mathrel{=}
+-\nabla\cdot(ap)
+\mathbin{+}
+\epsilon(t)\Delta p.
 $$
 
-速度场为
+这里定义 $\epsilon=g^2/2$ 只是为了把 Fokker--Planck 中的扩散系数写得更简洁。相应地，SDE 的噪声幅度必须写成 $g=\sqrt{2\epsilon}$；若误写成 $\sqrt{\epsilon}$，Fokker--Planck 中只会得到 $\tfrac12\epsilon\Delta p$。
+
+> **备注：为什么会出现 Laplace 项？**
+>
+> 在很小时间步 $\Delta t$ 内，布朗增量的标准差是 $\sqrt{\Delta t}$。二阶 Taylor 展开中的平方项因此是 $\Delta t$ 量级，极限中不会消失，最终产生 $\Delta p$。
+
+### 10.2 只给 ODE 加噪声为什么不行
+
+概率流 ODE 的目标边际密度已经满足连续性方程
+
+$$
+\partial_t\rho
+\mathrel{=}
+-\nabla\cdot(b\rho).
+$$
+
+现在保留原速度场 $b$ 作为漂移，并直接加入布朗噪声：
+
+$$
+\mathrm dZ_t
+\mathrel{=}
+b(t,Z_t)\,\mathrm dt
+\mathbin{+}
+\sqrt{2\epsilon(t)}\,\mathrm dW_t,
+$$
+
+记这个 SDE 的实际密度为 $p(t,x)$。它满足 Fokker--Planck 方程
+
+$$
+\partial_t p
+\mathrel{=}
+-\nabla\cdot(bp)
+\mathbin{+}
+\epsilon(t)\Delta p.
+$$
+
+如果希望它仍然沿着目标边际 $\rho(t,x)$ 演化，就应当能令 $p=\rho$。但把候选密度 $\rho$ 代入上式得到
+
+$$
+\partial_t\rho
+\mathrel{=}
+-\nabla\cdot(b\rho)
+\mathbin{+}
+\epsilon(t)\Delta\rho,
+$$
+
+这比 $\rho$ 原本满足的连续性方程多出了
+
+$$
+\epsilon(t)\Delta\rho.
+$$
+
+
+它沿密度下降方向把概率从高密度区域摊向低密度区域，因此会改变原来的边际路径。
+
+### 10.3 用 score 补偿扩散
+
+因为
+
+$$
+s=\nabla\log\rho
+\mathrel{=}
+\frac{\nabla\rho}{\rho},
+$$
+
+所以
+
+$$
+\rho s=\nabla\rho.
+$$
+
+选择前向漂移
 
 $$
 \boxed{
-u(t,x)
+b_F(t,x)
+\mathrel{=}
+b(t,x)+\epsilon(t)s(t,x).
+}
+\tag{10.2}
+$$
+
+构造前向 SDE
+
+$$
+\boxed{
+\mathrm dZ_t
+\mathrel{=}
+\bigl(b+\epsilon s\bigr)(t,Z_t)\,\mathrm dt
+\mathbin{+}
+\sqrt{2\epsilon(t)}\,\mathrm dW_t,
+\qquad
+Z_0\sim\rho_0.
+}
+\tag{10.3}
+$$
+
+把候选密度 $\rho$ 代入 Fokker--Planck 方程：
+
+$$
+\begin{aligned}
+\partial_t\rho
+&=
+-\nabla\cdot\bigl((b+\epsilon s)\rho\bigr)
+\mathbin{+}
+\epsilon\Delta\rho
+\\
+&=
+-\nabla\cdot(b\rho)
+-\epsilon\nabla\cdot(\rho s)
+\mathbin{+}
+\epsilon\Delta\rho
+\\
+&=
+-\nabla\cdot(b\rho)
+-\epsilon\Delta\rho
+\mathbin{+}
+\epsilon\Delta\rho
+\\
+&=
+-\nabla\cdot(b\rho).
+\end{aligned}
+$$
+
+> **备注：怎样直观理解这两个 $\Delta\rho$ 的抵消？**
+>
+> 布朗扩散产生
+>
+
+$$
++\epsilon\Delta\rho,
+$$
+
+>
+> 它把概率从高密度区域向周围摊开。新增的 score 漂移具有概率流量
+>
+
+$$
+\rho(\epsilon s)
+\mathrel{=}
+\epsilon\rho\nabla\log\rho
+\mathrel{=}
+\epsilon\nabla\rho.
+$$
+
+>
+> 把它放入连续性方程，会贡献
+>
+
+$$
+-\nabla\cdot(\epsilon\nabla\rho)
+\mathrel{=}
+-\epsilon\Delta\rho.
+$$
+
+>
+> 因此 score 漂移恰好补偿布朗扩散对单时刻密度的摊平作用。注意，它们抵消的是密度方程中的净效应，不是逐条样本轨迹上的随机波动；SDE 轨迹仍然是随机的。
+
+因此它与目标连续性方程一致。
+
+在相应 PDE 解唯一时，
+
+$$
+\boxed{
+p(t,x)=\rho(t,x).
+}
+\tag{10.4}
+$$
+
+### 10.4 前向、反向与确定性动力学
+
+同一条边际路径对应三种常用动力学：
+
+$$
+\boxed{
+\begin{aligned}
+\text{概率流 ODE：}\quad
+&\dot X_t=b(t,X_t),
+\\
+\text{前向 SDE：}\quad
+&\mathrm dZ_t=(b+\epsilon s)\,\mathrm dt
++\sqrt{2\epsilon}\,\mathrm dW_t,
+\\
+\text{反向 SDE：}\quad
+&\mathrm dZ_t=(b-\epsilon s)\,\mathrm dt
++\sqrt{2\epsilon}\,\mathrm d\overline W_t,
+\quad t:1\to0.
+\end{aligned}}
+\tag{10.5}
+$$
+
+> **备注：为什么反向 SDE 的漂移是 $b-\epsilon s$？**
+>
+> 反向 SDE 沿 $t$ 递减运行。设实际走了一小段长度 $h>0$：
+>
+
+$$
+t\longrightarrow t-h,
+\qquad
+\Delta t=-h.
+$$
+
+>
+> SDE 的一步更新是
+>
+
+$$
+Z_{t-h}
+\mathrel{=}
+Z_t
+-u_R(t,Z_t)h
++\sqrt{2\epsilon h}\,\xi,
+\qquad
+\xi\sim\mathcal N(0,\mathrm{Id}),
+$$
+
+>
+> 其中在这一小步内记 $\epsilon=\epsilon(t)$。注意：由于 $\Delta t=-h$，漂移造成的实际位移是 $-u_Rh$；布朗增量的方差仍为 $2\epsilon h$，不会因为时间反向而变成负数。
+>
+> 下面只比较这一小步造成的密度变化。
+>
+> 如果概率质量沿速度 $c$ 正向移动长度 $h$，连续性方程告诉我们，密度变化为
+>
+
+$$
+-h\,\nabla\cdot(\rho c).
+$$
+
+>
+> 当前反向一步的实际漂移速度是 $-u_R$，所以漂移造成的密度变化为
+>
+
+$$
++h\,\nabla\cdot(\rho u_R).
+$$
+
+>
+> 同时，布朗噪声会把密度摊开。由 10.2 节，它在长度 $h$ 内额外产生
+>
+
+$$
++\epsilon h\,\Delta\rho
+\mathrel{=}
++h\,\nabla\cdot(\epsilon\nabla\rho).
+$$
+
+>
+> 因此，反向 SDE 的一步总密度变化是
+>
+
+$$
+h\,\nabla\cdot
+\bigl(\rho u_R+\epsilon\nabla\rho\bigr).
+$$
+
+>
+> 现在取
+>
+
+$$
+\boxed{u_R=b-\epsilon s},
+$$
+
+>
+> 并把它代入上面的一步总密度变化：
+>
+
+$$
+\begin{aligned}
+h\,\nabla\cdot
+\bigl(\rho u_R+\epsilon\nabla\rho\bigr)
+&=
+h\,\nabla\cdot
+\bigl(\rho(b-\epsilon s)+\epsilon\nabla\rho\bigr)
+\\
+&=
+h\,\nabla\cdot
+\bigl(\rho b-\epsilon\rho s+\epsilon\nabla\rho\bigr)
+\\
+&=
+h\,\nabla\cdot
+\bigl(\rho b-\epsilon\nabla\rho+\epsilon\nabla\rho\bigr)
+\\
+&=
+h\,\nabla\cdot(\rho b).
+\end{aligned}
+$$
+
+>
+> 这里使用了 $\rho s=\nabla\rho$。最后得到的 $h\,\nabla\cdot(\rho b)$，正是目标 ODE 从 $t$ 倒走到 $t-h$ 时应有的密度变化。因此，反向 SDE 与目标 ODE 沿着同一条边际路径反向演化。
+>
+> 最后要区分“公式中的漂移”与“实际一步的位移”。虽然反向 SDE 写的是 $u_R=b-\epsilon s$，但因为 $\Delta t=-h$，其确定性位移实际为
+>
+
+$$
+-u_Rh
+\mathrel{=}
+-bh+\epsilon s\,h.
+$$
+
+>
+> 其中 $-bh$ 反转原来的概率输运，$+\epsilon s\,h$ 沿密度升高方向拉回样本，恰好补偿这一步中新加入的布朗噪声所造成的摊平。
+
+> **备注：为什么 ODE 可以直接倒着积分，而 SDE 需要 score 修正？**
+>
+> ODE 的轨迹由速度场唯一决定，把时间步改成负数就会沿原轨迹返回。
+>
+> SDE 每一小步都加入新噪声。反向过程不仅要反转平均移动，还要修正扩散造成的概率摊平；这个修正由 score 提供。
+
+![论文图 5：$\epsilon$ 对 ODE/SDE 样本轨迹的影响](images/paper-figure-05-epsilon-trajectories.png)
+
+*$\epsilon=0$ 是确定性 ODE；$\epsilon>0$ 后，同一边际路径可以由越来越随机的 SDE 轨迹实现。图中单条轨迹明显不同，但理想场下每个时刻的总体密度不依赖 $\epsilon$。来源：[论文 v4, Figure 5](https://arxiv.org/abs/2303.08797v4)。*
+
+### 10.5 把 $b=v-\gamma\dot\gamma s$ 代入
+
+由式 (7.2)，
+
+$$
+b=v-\gamma\dot\gamma s.
+$$
+
+因此
+
+$$
+\boxed{
+b_F
+\mathrel{=}
+v+\bigl(\epsilon-\gamma\dot\gamma\bigr)s,
+}
+\tag{10.6}
+$$
+
+$$
+\boxed{
+b_B
+\mathrel{=}
+v-\bigl(\epsilon+\gamma\dot\gamma\bigr)s.
+}
+\tag{10.7}
+$$
+
+这两个公式同时包含：
+
+- 确定性插值速度 $v$；
+- latent noise schedule $\gamma$；
+- 生成 SDE diffusion schedule $\epsilon$；
+- 边际 score $s$。
+
+---
+
+## 11. 理想选择模型
+
+选择 ODE 还是 SDE，取决于目标：
+
+| 目标 | 常见选择 |
+|---|---|
+| 给定初始噪声后希望结果确定 | ODE |
+| 希望保留随机采样轨迹 | SDE |
+| 希望使用成熟的 ODE 求解器 | ODE |
+| 更重视扩散带来的误差鲁棒性 | SDE |
+
+
+---
+
+# 第四部分：从统一框架推出常见算法
+
+这一部分不再引入新的统一原理，只把前面已经得到的公式具体化。
+
+主线是
+
+$$
+\boxed{
+\text{选择特殊的 }I,\gamma,\rho_0
+\quad\Longrightarrow\quad
+\text{得到 Flow Matching 或 diffusion 的常用公式。}
+}
+$$
+
+---
+
+## 12. Endpoint Flow Matching：令 $\gamma=0$
+
+取
+
+$$
+\gamma(t)=0,
+$$
+
+于是
+
+$$
+x_t=I(t,x_0,x_1),
+$$
+
+随机速度标签变为
+
+$$
+Y_t=\partial_tI(t,x_0,x_1).
+$$
+
+条件平均速度是
+
+$$
+\boxed{
+b(t,x)
 \mathrel{=}
 \mathbb E[
 \partial_tI(t,x_0,x_1)
@@ -1914,10 +1705,10 @@ u(t,x)
 I(t,x_0,x_1)=x
 ].
 }
-\tag{8.1}
+\tag{12.1}
 $$
 
-训练目标为
+训练目标是
 
 $$
 \boxed{
@@ -1925,45 +1716,35 @@ $$
 \mathrel{=}
 \mathbb E
 \left\|
-u_\theta(t,I(t,x_0,x_1))
+b_\theta\bigl(t,I(t,x_0,x_1)\bigr)
 \mathbin{-}
 \partial_tI(t,x_0,x_1)
 \right\|^2.
 }
-\tag{8.2}
+\tag{12.2}
 $$
 
-这就是本文所说的基本端点 Flow Matching。
-
-需要区分 Flow Matching 和 ODE：Flow Matching 是训练速度场 $u_\theta(t,x)$ 的方法；ODE
+训练完成后运行
 
 $$
 \frac{\mathrm dX_t}{\mathrm dt}
 \mathrel{=}
-u_\theta(t,X_t)
-$$
-
-则是在训练完成后使用这个速度场移动样本的动力学。
-
-在前面的随机插值中，$z$ 是随机采样的，因此训练输入和随机速度标签分别是
-
-$$
-x_t=I(t,x_0,x_1)+\gamma(t)z,
+b_\theta(t,X_t),
 \qquad
-Y_t=\partial_tI(t,x_0,x_1)+\dot\gamma(t)z.
+X_0\sim\rho_0.
 $$
 
-而基本 Flow Matching 取 $\gamma(t)\equiv0$，所以
+这就是本文所说的 endpoint Flow Matching。
 
-$$
-x_t=I(t,x_0,x_1),
-\qquad
-Y_t^{\mathrm{FM}}=\partial_tI(t,x_0,x_1).
-$$
+> **备注：Flow Matching 与 ODE 不是同一个概念。**
+>
+> Flow Matching 是学习速度场的方法；ODE 是训练完成后使用该速度场生成样本的动力学。
 
-因此，两种方法使用的随机速度标签一般不同：前者比基本 Flow Matching 多出由 $z$ 产生的 $\dot\gamma(t)z$。不过，由于端点 $x_0,x_1$ 也是随机采样的，$Y_t^{\mathrm{FM}}$ 本身仍然可以是随机的。
+---
 
-### 8.2 Rectified Flow——线性插值形式
+## 13. Linear Flow Matching 与 Rectified Flow
+
+### 13.1 线性端点插值
 
 取
 
@@ -1983,289 +1764,286 @@ $$
 
 $$
 \boxed{
-\mathcal L_{\mathrm{linear\text{-}FM}}
+\mathcal L_{\mathrm{linear\text{-}FM}}(\theta)
 \mathrel{=}
 \mathbb E
 \left\|
-u_\theta\bigl(t,(1-t)x_0+tx_1\bigr)
+b_\theta\bigl(t,(1-t)x_0+tx_1\bigr)
 \mathbin{-}
 (x_1-x_0)
 \right\|^2.
 }
-\tag{8.3}
+\tag{13.1}
 $$
 
-这也是 Rectified Flow 的基础训练形式。
+这也是 Rectified Flow 的首轮基础训练形式。
 
-这里的训练插值路径虽然是直线，但网络学到的是同一 $(t,x)$ 处随机速度标签的条件平均。因此，使用 $u_\theta(t,x)$ 生成样本时，ODE 的单条轨迹不一定仍是直线。
+虽然训练样本的插值线是直线，但生成 ODE 的轨迹不一定是直线。原因是网络学到的是所有经过同一 $(t,x)$ 的随机标签的条件平均。
+
+### 13.2 reflow 的基本思想
+
+Rectified Flow 的特色不只是使用线性插值，还包括重新配对：
+
+1. 先用独立端点对训练一个速度场；
+2. 从 $x_0\sim\rho_0$ 出发运行当前 ODE，得到生成终点 $\widehat x_1$；
+3. 把同一条生成轨迹的 $(x_0,\widehat x_1)$ 重新配成端点对；
+4. 在这些新端点对之间再次使用线性插值训练。
+
+新耦合比完全独立的噪声—数据配对更接近当前生成映射，因此重新训练后的轨迹往往更直、更容易用少量 ODE 步数逼近。
+
+> **备注：直线是否等于最优传输？**
+>
+> 不一定。轨迹是直线只是一个几何性质，并不能单独保证终点映射就是最优传输映射。
+>
+> 在有限模型误差下，reflow 也可能改变实际生成映射，因此它是算法步骤，不是无条件恒等变换。
 
 ---
 
-## 9. 从式 (2.1) 得到扩散模型的高斯边际路径
+## 14. One-sided Gaussian 随机插值
 
-第 2 章的一般双端点随机插值是
+当基分布是标准高斯时，可以直接写成
 
 $$
+\boxed{
 x_t
 \mathrel{=}
-I(t,x_0,x_1)+\gamma(t)z.
-$$
-
-这一公式负责规定每个时刻希望得到的边际分布，但它本身还不是 DDPM 或 DDIM。要连接扩散模型，先把式 (2.1) 具体化成一条数据到噪声的高斯边际路径。
-
-### 9.1 把式 (2.1) 改成扩散加噪形式
-
-扩散模型使用前向加噪时间 $\tau:0\to T$：
-
-$$
-\tau=0\text{ 是数据},
+\alpha(t)z+\beta(t)x_1,
 \qquad
-\tau=T\text{ 是近似高斯噪声}.
+z\sim\mathcal N(0,\mathrm{Id}),
+\quad
+x_1\sim\rho_1.
+}
+\tag{14.1}
 $$
 
-为避免与第 2 章的生成方向混淆，本章改用 $y$ 表示扩散变量。采样
+要求
+
+$$
+\alpha(0)=1,
+\qquad
+\beta(0)=0,
+$$
+
+$$
+\alpha(1)=0,
+\qquad
+\beta(1)=1.
+$$
+
+于是
+
+$$
+x_0=z\sim\mathcal N(0,\mathrm{Id}),
+\qquad
+x_1\sim\rho_1.
+$$
+
+它是一般双端点框架的线性特例：
+
+$$
+I(t,x_0,x_1)
+\mathrel{=}
+\alpha(t)x_0+\beta(t)x_1,
+\qquad
+\gamma(t)=0,
+$$
+
+其中 $x_0=z$。
+
+随机速度标签为
+
+$$
+Y_t
+\mathrel{=}
+\dot\alpha(t)z+\dot\beta(t)x_1.
+$$
+
+因此
+
+$$
+\boxed{
+b(t,x)
+\mathrel{=}
+\dot\alpha(t)\mathbb E[z\mid x_t=x]
+\mathbin{+}
+\dot\beta(t)\mathbb E[x_1\mid x_t=x].
+}
+\tag{14.2}
+$$
+
+由于 $z$ 是高斯变量，
+
+$$
+\boxed{
+s(t,x)
+\mathrel{=}
+-\frac1{\alpha(t)}
+\mathbb E[z\mid x_t=x].
+}
+\tag{14.3}
+$$
+
+还存在恒等式
+
+$$
+x
+\mathrel{=}
+\alpha(t)\mathbb E[z\mid x_t=x]
+\mathbin{+}
+\beta(t)\mathbb E[x_1\mid x_t=x].
+\tag{14.4}
+$$
+
+因此平均噪声、平均数据端点、score 和速度可以相互转换。
+
+这正是从统一随机插值走向常见 diffusion 参数化的桥梁。
+
+---
+
+## 15. 切换到 diffusion 的前向加噪时间
+
+前面一直使用生成时间
+
+$$
+t: \text{噪声}\to\text{数据}.
+$$
+
+扩散模型文献更常使用加噪时间
+
+$$
+\tau: \text{数据}\to\text{噪声}.
+$$
+
+二者方向相反。为避免混淆，本节改用 $y_\tau$：
+
+若把两个时间区间都归一化为 $[0,1]$，可以直接记成
+
+$$
+\tau=1-t.
+$$
+
+因此，生成时间中的“起点噪声”对应加噪时间中的“终点噪声”。
+
+$$
+\boxed{
+y_\tau
+\mathrel{=}
+a(\tau)y_0+\sigma(\tau)\varepsilon,
+}
+\tag{15.1}
+$$
+
+其中
 
 $$
 y_0\sim p_{\mathrm{data}},
 \qquad
-y_T:=\varepsilon,
-\qquad
-\varepsilon\sim\mathcal N(0,\mathrm{Id}),
-\qquad
-\varepsilon\perp y_0.
+\varepsilon\sim\mathcal N(0,\mathrm{Id}).
 $$
 
-把式 (2.1) 中的对象对应为
+端点条件是
 
 $$
-\begin{aligned}
-x_t&\longrightarrow y_\tau,\\
-(x_0,x_1)&\longrightarrow(y_0,y_T),\\
-I&\longrightarrow I_{\mathrm{diff}},\\
-\gamma z&\longrightarrow0,
-\end{aligned}
+a(0)=1,\qquad \sigma(0)=0,
 $$
 
-并选择
-
 $$
-I_{\mathrm{diff}}(\tau,y_0,y_T)
-:=
-a(\tau)y_0+\sigma(\tau)y_T.
+a(T)\approx0,\qquad \sigma(T)\approx1.
 $$
 
-于是式 (2.1) 变成
+这就是第 14 节 one-sided Gaussian 插值沿相反时间方向的写法。
+
+> **备注：为什么终点通常写“近似高斯”？**
+>
+> 连续 VP 扩散在有限 $T$ 时一般只有 $a(T)\approx0$，而不是严格等于零。因此 $y_T$ 只是接近标准高斯。
+>
+> 理论推导常使用理想端点；实际算法会选择足够强的末端噪声。
+
+---
+
+## 16. noise、score 与 velocity 参数化
+
+令 $\rho(\tau,y)$ 表示 $y_\tau$ 的边际密度，并定义
 
 $$
-\boxed{
-y_\tau
-\mathrel{=}
-a(\tau)y_0+\sigma(\tau)\varepsilon.
-}
-\tag{9.1}
+s_\tau(y)=\nabla_y\log\rho(\tau,y).
 $$
 
-这里的等号是逐样本等式：先采样一次 $(y_0,\varepsilon)$，再用同一个 $\varepsilon$ 构造所有时刻的 $y_\tau$。因此这是一条对 $\tau$ 可微的随机插值轨迹。第 10 章的 VP SDE 只在每个固定时刻与它共享边际分布，并不共享整条轨迹的联合分布。
+### 16.1 noise 与 score
 
-理想端点条件是
-
-$$
-\begin{aligned}
-a(0)=1,
-&\qquad
-\sigma(0)=0,\\
-a(T)=0,
-&\qquad
-\sigma(T)=1.
-\end{aligned}
-$$
-
-此时 $y_0$ 是数据端点，$y_T=\varepsilon$ 是噪声端点。
-
-第 8 章的基本 Flow Matching 同样取额外扰动 $\gamma z=0$，但训练目标不同：Flow Matching 回归路径速度 $\partial_tI$；扩散模型则回归用于构造当前加噪样本的高斯噪声 $\varepsilon$，再把它换算成 score。
-
-### 9.2 统一速度预测、噪声预测和 score 预测
-
-同一条高斯插值是
-
-$$
-y_\tau
-\mathrel{=}
-a(\tau)y_0+\sigma(\tau)\varepsilon
-$$
-
-其中 $\tau\in[0,T]$ 是第 9.1 节定义的扩散前向加噪时间。沿用前文的记号，用 $\rho(\tau,y)$ 表示 $y_\tau$ 在时刻 $\tau$ 的边际概率密度，即
-
-$$
-\boxed{
-y_\tau\sim\rho(\tau,\cdot).
-}
-$$
-
-这里的 $y$ 是密度函数的空间变量，而 $y_\tau$ 是随机变量。
-
-它同时包含三种常见预测对象：
-
-- 噪声预测：预测加入的 $\varepsilon$；
-- score 预测：预测 $s_\tau(y)=\nabla_y\log\rho(\tau,y)$；
-- 速度预测：预测这条边际路径的条件平均速度 $u(\tau,y)$。
-
-下面的相互转换只使用插值公式、条件期望和时间求导，不需要先引入任何训练损失。
-
-#### 第一个关系：噪声预测与 score 预测
-
-对满足 $\sigma(\tau)>0$ 的内部时刻，高斯条件密度恒等式给出
+由高斯条件密度，
 
 $$
 \boxed{
 s_\tau(y)
-:=
-\nabla_y\log\rho(\tau,y)
 \mathrel{=}
 -\frac1{\sigma(\tau)}
 \mathbb E[\varepsilon\mid y_\tau=y].
 }
-\tag{9.2}
+\tag{16.1}
 $$
 
-> **备注：为什么式 (9.2) 成立？**
->
-> 固定 $y_0$ 后，
+若噪声网络学习
 
 $$
-y_\tau\mid y_0
-\sim
-\mathcal N\!\left(
-a(\tau)y_0,\sigma^2(\tau)\mathrm{Id}
-\right),
+\varepsilon_\theta(y,\tau)
+\approx
+\mathbb E[\varepsilon\mid y_\tau=y],
 $$
 
-> 所以条件密度的 score 为
+则
 
 $$
-\nabla_y\log p_\tau(y\mid y_0)
+\boxed{
+s_\theta(y,\tau)
 \mathrel{=}
--\frac{y-a(\tau)y_0}{\sigma^2(\tau)}.
+-\frac{\varepsilon_\theta(y,\tau)}{\sigma(\tau)}.
+}
+\tag{16.2}
 $$
 
-> 整体密度 $\rho(\tau,y)$ 是这些条件高斯密度的混合。对混合密度求 score，可以得到“整体 score 等于各条件 score 在给定 $y_\tau=y$ 后的条件平均”：
+### 16.2 noise 与 velocity
 
-$$
-\nabla_y\log\rho(\tau,y)
-\mathrel{=}
-\mathbb E\!\left[
-\nabla_y\log p_\tau(y\mid y_0)
-\,\middle|\,
-y_\tau=y
-\right].
-$$
-
-> 又因为在条件 $y_\tau=y$ 下，
-
-$$
-y-a(\tau)y_0
-\mathrel{=}
-\sigma(\tau)\varepsilon,
-$$
-
-> 所以
-
-$$
-\nabla_y\log\rho(\tau,y)
-\mathrel{=}
--\frac1{\sigma(\tau)}
-\mathbb E[\varepsilon\mid y_\tau=y].
-$$
-
-> 这就是式 (9.2)。
-
-#### 第二个关系：速度预测与噪声预测
-
-对插值关于时间求导，得到
+对式 (15.1) 求导：
 
 $$
 Y_\tau
-:=
-\frac{\mathrm d}{\mathrm d\tau}y_\tau
 \mathrel{=}
 \dot a(\tau)y_0+\dot\sigma(\tau)\varepsilon.
 $$
 
-这里 $Y_\tau$ 表示单个插值样本在时刻 $\tau$ 的瞬时速度。如果直接训练速度预测器，$Y_\tau$ 就是随机监督标签；在本节中，它还用于定义条件平均速度场
-
-$$
-u(\tau,y)
-:=
-\mathbb E[Y_\tau\mid y_\tau=y].
-$$
-
-下面直接把 $Y_\tau$ 改写成含有 $y$ 和 $\varepsilon$ 的形式。在 $a(\tau)>0$ 且给定 $y_\tau=y$ 时，由
-
-$$
-y
-\mathrel{=}
-a(\tau)y_0+\sigma(\tau)\varepsilon
-$$
-
-直接解出
+由
 
 $$
 y_0
 \mathrel{=}
-\frac{y-\sigma(\tau)\varepsilon}{a(\tau)}.
+\frac{y-\sigma(\tau)\varepsilon}{a(\tau)},
 $$
 
-代入随机速度标签：
+得到
 
 $$
-\begin{aligned}
 Y_\tau
-&=
-\dot a(\tau)
-\frac{y-\sigma(\tau)\varepsilon}{a(\tau)}
-\mathbin{+}
-\dot\sigma(\tau)\varepsilon
-\\
-&=
-\frac{\dot a(\tau)}{a(\tau)}y
-\mathbin{+}
-\left[
-\dot\sigma(\tau)
-\mathbin{-}
-\frac{\dot a(\tau)}{a(\tau)}\sigma(\tau)
-\right]
-\varepsilon.
-\end{aligned}
-$$
-
-现在给定 $y_\tau=y$ 后，对上式取条件期望，得到
-
-$$
-u(\tau,y)
 \mathrel{=}
-\frac{\dot a(\tau)}{a(\tau)}y
+\frac{\dot a}{a}y
 \mathbin{+}
-\left[
-\dot\sigma(\tau)
-\mathbin{-}
-\frac{\dot a(\tau)}{a(\tau)}\sigma(\tau)
-\right]
-\mathbb E[\varepsilon\mid y_\tau=y].
+\left(
+\dot\sigma-\frac{\dot a}{a}\sigma
+\right)\varepsilon.
 $$
 
-为了使转换关系更清楚，记
+定义
 
 $$
-A(\tau)
-:=
-\frac{\dot a(\tau)}{a(\tau)},
-\qquad
-B(\tau)
-:=
+A(\tau):=\frac{\dot a(\tau)}{a(\tau)},
+$$
+
+$$
+B(\tau):=
 \dot\sigma(\tau)-A(\tau)\sigma(\tau).
 $$
 
-那么速度与噪声的核心关系就是
+取条件期望：
 
 $$
 \boxed{
@@ -2276,72 +2054,82 @@ A(\tau)y
 B(\tau)
 \mathbb E[\varepsilon\mid y_\tau=y].
 }
-\tag{9.3}
+\tag{16.3}
 $$
 
-> **例子：一维线性加噪。**
+因此理想模型下
+
+$$
+\boxed{
+\begin{aligned}
+s_\theta
+&=-\frac{\varepsilon_\theta}{\sigma},
+\\
+u_\theta
+&=Ay+B\varepsilon_\theta,
+\\
+\varepsilon_\theta
+&=\frac{u_\theta-Ay}{B}.
+\end{aligned}}
+\tag{16.4}
+$$
+
+> **例子：一维线性加噪中三种参数化如何换算？**
 >
 > 取
+>
 
 $$
 a(\tau)=1-\tau,
 \qquad
-\sigma(\tau)=\tau.
+\sigma(\tau)=\tau,
 $$
 
-> 插值就是
-
-$$
-y_\tau
-\mathrel{=}
-(1-\tau)y_0+\tau\varepsilon,
-$$
-
-> 随机速度标签为
-
-$$
-Y_\tau
-\mathrel{=}
-\varepsilon-y_0.
-$$
-
-> 现在取 $\tau=\tfrac12$，并观察到 $y_\tau=1$。假设噪声预测器给出的条件平均噪声是
-
-$$
-\eta\left(\tfrac12,1\right)=0.2.
-$$
-
-> 这表示：在所有能够产生当前位置 $y_\tau=1$ 的样本中，$\varepsilon$ 的平均值是 $0.2$。
 >
-> 先由
+> 则
+>
 
 $$
-1
+y_\tau=(1-\tau)y_0+\tau\varepsilon,
+\qquad
+Y_\tau=\varepsilon-y_0.
+$$
+
+>
+> 令 $\tau=\tfrac12$，观察到 $y_\tau=1$，并假设网络给出的条件平均噪声为
+>
+
+$$
+\mathbb E[\varepsilon\mid y_{1/2}=1]=0.2.
+$$
+
+>
+> 由 $1=\tfrac12y_0+\tfrac12\varepsilon$，
+>
+
+$$
+\mathbb E[y_0\mid y_{1/2}=1]
 \mathrel{=}
-\frac12y_0+\frac12\varepsilon
-$$
-
-> 计算对应的条件平均数据端点：
-
-$$
-\mathbb E[y_0\mid y_\tau=1]
-\mathrel{=}
-\frac{1-\frac12\times0.2}{\frac12}
+\frac{1-\frac12\times0.2}{1/2}
 \mathrel{=}
 1.8.
 $$
 
-> 因为 $Y_\tau=\varepsilon-y_0$，所以条件平均速度是
+>
+> 所以条件平均速度为
+>
 
 $$
-u\left(\tfrac12,1\right)
+u\!\left(\tfrac12,1\right)
 \mathrel{=}
 0.2-1.8
 \mathrel{=}
--1.6.
+-1.6,
 $$
 
-> 同一个噪声预测还能换算成 score：
+>
+> score 为
+>
 
 $$
 s_{1/2}(1)
@@ -2351,142 +2139,56 @@ s_{1/2}(1)
 -0.4.
 $$
 
-> 因此，同一个条件平均噪声 $0.2$ 同时确定了
+>
+> 同一个噪声预测 $0.2$ 同时确定了速度预测 $-1.6$ 和 score 预测 $-0.4$。这就是三种参数化“信息等价”的具体含义。
+
+所以三种参数化包含相同的条件期望信息：
 
 $$
 \boxed{
-\text{噪声预测 }0.2,
-\qquad
-\text{速度预测 }-1.6,
-\qquad
-\text{score 预测 }-0.4.
+\text{noise prediction}
+\Longleftrightarrow
+\text{score prediction}
+\Longleftrightarrow
+\text{velocity prediction}.
 }
 $$
 
-#### 三者的相互转换
-
-在理想预测下，噪声网络输出满足
-
-$$
-\varepsilon_\theta(y,\tau)
-\mathrel{=}
-\mathbb E[\varepsilon\mid y_\tau=y].
-$$
-
-因此，在 $\sigma(\tau)>0$ 且 $B(\tau)\neq0$ 时，速度预测 $u_\theta$、噪声预测 $\varepsilon_\theta$ 和 score 预测 $s_\theta$ 可以双向转换：
-
-$$
-\boxed{
-\begin{aligned}
-\text{由噪声得到 score：}\qquad
-&s_\theta
-\mathrel{=}
--\frac{\varepsilon_\theta}{\sigma},
-\\[1mm]
-\text{由 score 得到噪声：}\qquad
-&\varepsilon_\theta
-\mathrel{=}
--\sigma s_\theta,
-\\[1mm]
-\text{由噪声得到速度：}\qquad
-&u_\theta
-\mathrel{=}
-Ay+B\varepsilon_\theta,
-\\[1mm]
-\text{由速度得到噪声：}\qquad
-&\varepsilon_\theta
-\mathrel{=}
-\frac{u_\theta-Ay}{B},
-\\[1mm]
-\text{由 score 得到速度：}\qquad
-&u_\theta
-\mathrel{=}
-Ay-B\sigma s_\theta,
-\\[1mm]
-\text{由速度得到 score：}\qquad
-&s_\theta
-\mathrel{=}
--\frac{u_\theta-Ay}{B\sigma}.
-\end{aligned}
-}
-\tag{9.4}
-$$
-
-所以核心结论是
-
-$$
-\boxed{
-\text{速度预测}
-\quad\Longleftrightarrow\quad
-\text{噪声预测}
-\quad\Longleftrightarrow\quad
-\text{score 预测}.
-}
-$$
-
-在理想模型下，选择其中任意一种参数化，都可以按照已知的 $a(\tau)$ 和 $\sigma(\tau)$ 换算出另外两种。DDPM 通常选择噪声预测参数化，概率流 ODE 使用速度参数化，而反向 SDE 使用 score 参数化；它们可以共享同一个底层网络信息。
+> **备注：转换为什么需要条件？**
+>
+> 上式要求对应分母不为零，例如 $\sigma(\tau)>0$、$a(\tau)>0$、$B(\tau)\neq0$。端点附近通常要使用更稳定的参数化或单独处理。
 
 ---
 
-## 10. 随机分支：VP SDE 与离散 DDPM
+## 17. VP 路径与前向 VP SDE
 
-第 9 章的式 (9.1) 给出一般高斯加噪路径。本章只选择其中满足“方差保持”条件的一类路径，并说明它的连续形式与离散形式：
-
-$$
-\boxed{
-\text{连续时间：VP SDE}
-\qquad\longleftrightarrow\qquad
-\text{离散时间：DDPM}
-}
-$$
-
-VP SDE 的全称是 **Variance Preserving Stochastic Differential Equation**，中文通常译为**方差保持随机微分方程**。DDPM 的全称是 **Denoising Diffusion Probabilistic Model**，中文通常译为**去噪扩散概率模型**。二者描述的是同一类逐渐加噪的扩散过程：VP SDE 使用连续时间，DDPM 使用有限个离散时间步。
-
-### 10.1 从式 (9.1) 得到前向 VP SDE
-
-第 9 章的高斯插值在每个固定时刻的边际可以写为
-
-$$
-y_\tau
-\overset{\mathrm d}{=}
-a(\tau)y_0+\sigma(\tau)\varepsilon,
-\qquad
-\varepsilon\sim\mathcal N(0,\mathrm{Id}).
-$$
-
-VP 路径进一步要求
+Variance Preserving 路径要求
 
 $$
 a^2(\tau)+\sigma^2(\tau)=1.
 $$
 
-设 $\beta(\tau)\geq0$ 表示时刻 $\tau$ 的加噪速率，并定义
+选择加噪速率 $\beta(\tau)\ge0$，定义
 
 $$
 \boxed{
-\begin{aligned}
 a(\tau)
-&=
-\exp\!\left(
+\mathrel{=}
+\exp\left(
 -\frac12\int_0^\tau\beta(r)\,\mathrm dr
 \right),
-\\
-\sigma^2(\tau)
-&=
-1-a^2(\tau).
-\end{aligned}
 }
+\tag{17.1}
 $$
 
-因此
-
 $$
-\frac{\dot a(\tau)}{a(\tau)}
-\mathrel{=}
--\frac12\beta(\tau).
+\boxed{
+\sigma^2(\tau)=1-a^2(\tau).
+}
+\tag{17.2}
 $$
 
-与这组系数对应的前向 VP SDE 为
+对应的前向 VP SDE 是
 
 $$
 \boxed{
@@ -2494,77 +2196,56 @@ $$
 \mathrel{=}
 -\frac12\beta(\tau)y_\tau\,\mathrm d\tau
 \mathbin{+}
-\sqrt{\beta(\tau)}\,\mathrm dW_\tau,
-\qquad
-\tau:0\longrightarrow T.
+\sqrt{\beta(\tau)}\,\mathrm dW_\tau.
 }
-\tag{10.1}
+\tag{17.3}
 $$
 
-对每个固定时刻 $\tau$，式 (10.1) 的条件边际可以写成
+给定初始数据 $y_0$，它在固定时刻的条件边际满足
 
 $$
+\boxed{
 y_\tau\mid y_0
 \overset{\mathrm d}{=}
-a(\tau)y_0+\sigma(\tau)\varepsilon,
+a(\tau)y_0+\sigma(\tau)\varepsilon.
+}
+\tag{17.4}
+$$
+
+式 (15.1) 使用同一个 $\varepsilon$ 表示所有时刻时，是一条可微随机插值轨迹；VP SDE 的整条轨迹由布朗运动驱动，不可微。
+
+二者相同的是每个固定时刻的条件边际，不是整条路径律。
+
+---
+
+## 18. 从 VP SDE 到 DDPM 前向链
+
+取离散时刻 $k=0,1,\ldots,K$。定义
+
+$$
+\alpha_k:=1-\beta_k,
 \qquad
-\varepsilon\sim\mathcal N(0,\mathrm{Id}).
+0<\beta_k<1.
 $$
 
-这里的 $\varepsilon$ 只用于表示固定时刻的条件边际；VP SDE 的整条轨迹由布朗运动 $W_\tau$ 驱动，不等于第 9 章中“固定同一个 $\varepsilon$”的可微插值轨迹。
-
-其中：
-
-- $-\tfrac12\beta(\tau)y_\tau\,\mathrm d\tau$ 是漂移项，使原有信号逐渐衰减；
-- $\sqrt{\beta(\tau)}\,\mathrm dW_\tau$ 是扩散项，不断加入高斯噪声；
-- $W_\tau$ 是第 6.2 节定义的标准布朗运动。
-
-随着 $\tau$ 增大，信号系数 $a(\tau)$ 逐渐减小，噪声系数 $\sigma(\tau)$ 逐渐增大。若数据已经标准化为每个分量的方差约为 $1$，那么信号方差与噪声方差之和仍约为 $1$，这就是“variance preserving”的含义。当加噪时间足够长时，$a(T)\approx0$、$\sigma(T)\approx1$，所以 $y_T$ 近似服从标准高斯分布。
-
-### 10.2 将 VP 过程离散为 DDPM
-
-取时间网格
-
-$$
-0=\tau_0<\tau_1<\cdots<\tau_K=T,
-\qquad
-\Delta\tau_k:=\tau_k-\tau_{k-1},
-\qquad
-y_k:=y_{\tau_k}.
-$$
-
-在第 $k$ 步选择噪声强度 $\beta_k\in(0,1)$，并定义
-
-$$
-\alpha_k:=1-\beta_k.
-$$
-
-DDPM 的一步前向加噪为
+DDPM 前向一步是
 
 $$
 \boxed{
 y_k
 \mathrel{=}
-\sqrt{\alpha_k}\,y_{k-1}
+\sqrt{\alpha_k}y_{k-1}
 \mathbin{+}
-\sqrt{\beta_k}\,\varepsilon_k,
+\sqrt{\beta_k}\varepsilon_k,
 \qquad
-\varepsilon_k\sim\mathcal N(0,\mathrm{Id}),
+\varepsilon_k\sim\mathcal N(0,\mathrm{Id}).
 }
-\tag{10.2}
+\tag{18.1}
 $$
 
-其中各步的 $\varepsilon_k$ 相互独立。$\alpha_k$ 表示经过第 $k$ 步后保留下来的信号方差比例，$\beta_k=1-\alpha_k$ 表示该步加入的噪声方差。对于足够小的时间步，二者与连续 VP SDE 中的加噪速率近似满足
+各步 $\varepsilon_k$ 相互独立。
 
-$$
-\beta_k
-\approx
-\beta(\tau_{k-1})\Delta\tau_k,
-$$
-
-所以式 (10.2) 是前向 VP SDE (10.1) 的离散形式。
-
-连续经过前 $k$ 步后，原始信号的方差保留比例是每一步保留比例的乘积。定义
+定义累计信号保留比例
 
 $$
 \boxed{
@@ -2572,35 +2253,63 @@ $$
 :=
 \prod_{j=1}^k\alpha_j.
 }
-\tag{10.3}
+\tag{18.2}
 $$
 
-反复使用式 (10.2)，可以直接得到第 $k$ 个时刻相对于初始数据的边际采样公式：
+则可以直接从 $y_0$ 采样任意时刻：
 
 $$
 \boxed{
 y_k
 \overset{\mathrm d}{=}
-\sqrt{\bar\alpha_k}\,y_0
+\sqrt{\bar\alpha_k}y_0
 \mathbin{+}
-\sqrt{1-\bar\alpha_k}\,\varepsilon,
-\qquad
-\varepsilon\sim\mathcal N(0,\mathrm{Id}).
+\sqrt{1-\bar\alpha_k}\varepsilon.
 }
-\tag{10.4}
+\tag{18.3}
 $$
 
-式 (10.4) 正是第 9 章的高斯加噪公式 (9.1) 在离散时刻的具体形式，其中
+> **备注：式 (17.1) 如何近似得到式 (18.2)？**
+>
+> 将式 (17.1) 平方，并把连续积分近似成离散小区间之和：
+>
 
 $$
-a_k=\sqrt{\bar\alpha_k},
-\qquad
-\sigma_k=\sqrt{1-\bar\alpha_k}.
+a^2(\tau_k)
+\mathrel{=}
+\exp\left(-\int_0^{\tau_k}\beta(r)\,\mathrm dr\right)
+\approx
+\exp\left(-\sum_{j=1}^k\beta_j\right)
+\mathrel{=}
+\prod_{j=1}^k e^{-\beta_j}.
 $$
 
-因此，训练时可以随机选择 $k$，再用一个高斯噪声 $\varepsilon$ 直接构造 $y_k$，不需要从 $y_0$ 开始逐步执行 $k$ 次加噪。
+>
+> 当每一步的 $\beta_j$ 很小时，利用 $e^{-x}\approx1-x$，得到
+>
 
-常见的 DDPM 噪声预测目标为
+$$
+a^2(\tau_k)
+\approx
+\prod_{j=1}^k(1-\beta_j)
+\mathrel{=}
+\prod_{j=1}^k\alpha_j
+\mathrel{=}
+\bar\alpha_k.
+$$
+
+>
+> 因而
+>
+
+$$
+\boxed{a(\tau_k)\approx\sqrt{\bar\alpha_k}}.
+$$
+
+>
+> 这里离散的 $\beta_j$ 已包含时间步长，即大致对应连续噪声率 $\beta(\tau_j)\Delta\tau$。
+
+训练常用
 
 $$
 \boxed{
@@ -2611,19 +2320,19 @@ $$
 \varepsilon_\theta(y_k,k)-\varepsilon
 \right\|^2.
 }
-\tag{10.5}
+\tag{18.4}
 $$
 
-这只是第 9.2 节噪声预测在离散网格上的写法。由式 (9.4)，它同时给出近似 score
+网络同时给出
 
 $$
 s_\theta(y_k,k)
 \mathrel{=}
 -\frac{\varepsilon_\theta(y_k,k)}
-{\sqrt{1-\bar\alpha_k}}.
+{\sqrt{1-\bar\alpha_k}},
 $$
 
-由前向边际公式反解 $y_0$，还可得到干净数据估计
+以及干净数据估计
 
 $$
 \boxed{
@@ -2635,67 +2344,42 @@ y_k-\sqrt{1-\bar\alpha_k}\varepsilon_\theta(y_k,k)
 \sqrt{\bar\alpha_k}
 }.
 }
-\tag{10.6}
+\tag{18.5}
 $$
 
-DDPM 和 DDIM 都可以使用这个噪声预测器，也都可以使用式 (10.6) 的 $\widehat y_0$。两者的区别不在这里，而在生成时如何从 $y_k$ 更新到 $y_{k-1}$。
-
-### 10.3 离散随机生成：DDPM 反向更新
-
-式 (10.2) 描述的是从数据到噪声的前向链，而生成需要从噪声 $y_K$ 返回数据 $y_0$。第 6.5 节已经说明：随机扩散过程不能仅靠把时间步改成负数来反向运行，反向过程还需要 score 提供的密度信息。
-
-在离散 DDPM 中，这些信息由噪声预测器 $\varepsilon_\theta$ 提供；根据式 (9.4)，噪声预测与 score 预测可以相互转换。下面直接利用前向链的高斯结构构造离散反向更新，不再单独写出连续的反向 VP SDE。
-
-式 (10.2) 定义的 DDPM 前向过程是线性高斯马尔可夫链。因此，给定 $y_k$ 和真实 $y_0$ 时，$y_{k-1}$ 的一步后验仍是高斯分布：
+> **备注：$\widehat y_0$ 的公式从哪里来？**
+>
+> 式 (18.3) 在一次训练样本上写成
+>
 
 $$
-q_{\mathrm{fwd}}(y_{k-1}\mid y_k,y_0)
+y_k
 \mathrel{=}
-\mathcal N(
-\widetilde\mu_k,
-\widetilde\beta_k\mathrm{Id}
-),
-\tag{10.7}
-$$
-
-其中
-
-$$
-\widetilde\beta_k
-\mathrel{=}
-\frac{1-\bar\alpha_{k-1}}
-{1-\bar\alpha_k}\beta_k,
-\tag{10.8}
-$$
-
-$$
-\widetilde\mu_k(y_k,y_0)
-\mathrel{=}
-\frac{
-\sqrt{\bar\alpha_{k-1}}\beta_k
-}{
-1-\bar\alpha_k
-}y_0
+\sqrt{\bar\alpha_k}y_0
 \mathbin{+}
-\frac{
-\sqrt{\alpha_k}(1-\bar\alpha_{k-1})
-}{
-1-\bar\alpha_k
-}y_k.
-\tag{10.9}
+\sqrt{1-\bar\alpha_k}\varepsilon.
 $$
 
-生成时不知道真实 $y_0$。将 $y_0$ 从条件后验中积分掉后，真实的
+>
+> 如果网络预测了噪声 $\widehat\varepsilon=\varepsilon_\theta(y_k,k)$，就把该式当作关于 $y_0$ 的一次方程：
+>
 
 $$
-q_{\mathrm{fwd}}(y_{k-1}\mid y_k)
+\sqrt{\bar\alpha_k}\,\widehat y_0
 \mathrel{=}
-\int
-q_{\mathrm{fwd}}(y_{k-1}\mid y_k,y_0)
-q(y_0\mid y_k)\,\mathrm dy_0
+y_k
+\mathbin{-}
+\sqrt{1-\bar\alpha_k}\,\widehat\varepsilon.
 $$
 
-一般是高斯混合，不是单个方差为 $\widetilde\beta_k\mathrm{Id}$ 的高斯分布。DDPM 因此选择一个反向高斯模型
+>
+> 两边除以 $\sqrt{\bar\alpha_k}$ 就得到式 (18.5)。因此 $\widehat y_0$ 不是网络必须单独输出的第二个量；它可以由当前带噪样本和噪声预测代数换算得到。
+
+---
+
+## 19. DDPM 的反向高斯模型
+
+DDPM 将每一步反向条件分布建模为高斯：
 
 $$
 p_\theta(y_{k-1}\mid y_k)
@@ -2706,7 +2390,17 @@ p_\theta(y_{k-1}\mid y_k)
 \right).
 $$
 
-把式 (10.6) 的网络估计 $\widehat y_0$ 代入式 (10.9) 的条件后验均值，得到常用的反向均值参数化
+其中方差常取前向一步后验的方差
+
+$$
+\widetilde\beta_k
+\mathrel{=}
+\frac{1-\bar\alpha_{k-1}}
+{1-\bar\alpha_k}\beta_k.
+\tag{19.1}
+$$
+
+网络通过预测噪声来参数化反向均值：
 
 $$
 \boxed{
@@ -2720,10 +2414,92 @@ y_k
 \varepsilon_\theta(y_k,k)
 \right).
 }
-\tag{10.10}
+\tag{19.2}
 $$
 
-当 $\bar\alpha_K$ 足够接近 $0$ 时，从 $y_K\sim\mathcal N(0,\mathrm{Id})$ 出发，按 $k=K,K-1,\ldots,1$ 执行
+> **备注：式 (19.2) 如何由反向 VP SDE 简单离散得到？**
+>
+> 由式 (17.3)，前向 VP SDE 的漂移和扩散满足
+>
+
+$$
+f(\tau,y)=-\frac12\beta(\tau)y,
+\qquad
+g^2(\tau)=\beta(\tau).
+$$
+
+>
+> 由式 (10.5)，一般反向 SDE 的漂移可以写成 $f-g^2s$，所以 VP 的反向 SDE 为
+>
+
+$$
+\mathrm dy_\tau
+\mathrel{=}
+\left[
+-\frac12\beta(\tau)y_\tau
+-\beta(\tau)s_\theta(\tau,y_\tau)
+\right]\mathrm d\tau
+\mathbin{+}
+\sqrt{\beta(\tau)}\,\mathrm d\overline W_\tau,
+\qquad \tau:1\to0.
+$$
+
+>
+> 令一步的离散噪声量为 $\beta_k\approx\beta(\tau_k)\Delta\tau$。从 $\tau_k$ 反向走到 $\tau_{k-1}$，做一步 Euler 离散，其均值为
+>
+
+$$
+\mu_\theta(y_k,k)
+\approx
+y_k+\frac{\beta_k}{2}y_k+\beta_k s_\theta(y_k,k).
+$$
+
+>
+> 利用第 18 节中的关系
+>
+
+$$
+s_\theta(y_k,k)
+\mathrel{=}
+-\frac{\varepsilon_\theta(y_k,k)}
+{\sqrt{1-\bar\alpha_k}},
+$$
+
+>
+> 得到
+>
+
+$$
+\mu_\theta(y_k,k)
+\approx
+\left(1+\frac{\beta_k}{2}\right)y_k
+\mathbin{-}
+\frac{\beta_k}{\sqrt{1-\bar\alpha_k}}
+\varepsilon_\theta(y_k,k).
+$$
+
+>
+> 又因为 $\alpha_k=1-\beta_k$，所以当 $\beta_k$ 很小时，
+>
+
+$$
+\frac1{\sqrt{\alpha_k}}
+\mathrel{=}
+\frac1{\sqrt{1-\beta_k}}
+\approx
+1+\frac{\beta_k}{2}.
+$$
+
+>
+> 忽略 $O(\beta_k^2)$ 高阶项，就得到式 (19.2)。因此，从连续反向 SDE 的角度看，式 (19.2) 是它的一阶离散形式。
+
+从
+
+$$
+y_K\sim\mathcal N(0,\mathrm{Id})
+$$
+
+出发，反向更新
 
 $$
 \boxed{
@@ -2731,36 +2507,29 @@ y_{k-1}
 \mathrel{=}
 \mu_\theta(y_k,k)
 \mathbin{+}
-\sqrt{\widetilde\beta_k}\,\xi_k,
+\sqrt{\widetilde\beta_k}\xi_k,
 \qquad
 \xi_k\sim\mathcal N(0,\mathrm{Id}).
 }
-\tag{10.11}
+\tag{19.3}
 $$
 
-这就是本文采用的 DDPM 随机反向模型。它用单个高斯近似一般非高斯的真实反向条件分布；在小时间步极限下，这种高斯反向参数化与反向 VP SDE 建立对应。每一步都重新采样 $\xi_k$，因此即使初始 $y_K$ 相同，生成轨迹也可以不同。
+每一步都重新采样 $\xi_k$，所以 DDPM 的反向轨迹是随机的。
+
 
 ---
 
-## 11. 确定性分支：VP 概率流 ODE 与 DDIM
+## 20. VP 概率流 ODE
 
-第 10.1 节给出了连续 VP 前向过程，第 10.2 节又定义了离散的累计信号保留比例 $\bar\alpha_k$ 和噪声预测器。本章只改变生成动力学，主线是
+前向 VP SDE 的漂移和扩散幅度是
 
 $$
-\boxed{
-\begin{array}{c}
-\text{VP 概率流 ODE：在连续时间中不注入新噪声}
-\\
-\Downarrow\ \text{放到有限时间网格上}
-\\
-\text{DDIM：每个离散反向步都不加入新随机量}
-\end{array}
-}
+f(\tau,y)=-\frac12\beta(\tau)y,
+\qquad
+g^2(\tau)=\beta(\tau).
 $$
 
-### 11.1 连续确定性生成：VP 概率流 ODE
-
-前向 VP SDE 的密度满足 Fokker--Planck 方程。根据第 6 章的概率流结论，同一条边际密度路径也可以由下列确定性 ODE 实现：
+与它共享边际的概率流 ODE 为
 
 $$
 \boxed{
@@ -2770,42 +2539,18 @@ $$
 \mathbin{-}
 \frac12\beta(\tau)s_\tau(y_\tau).
 }
-\tag{11.1}
+\tag{20.1}
 $$
 
-由式 (10.1) 的漂移项以及 VP 条件 $a^2+\sigma^2=1$，有
+代入
 
 $$
-\frac{\dot a}{a}=-\frac12\beta,
-\qquad
-a^2+\sigma^2=1,
-$$
-
-因而
-
-$$
-\frac{\dot a}{a}\sigma^2-\sigma\dot\sigma
+s_\theta
 \mathrel{=}
--\frac12\beta.
+-\frac{\varepsilon_\theta}{\sigma},
 $$
 
-把它们代入式 (9.4) 中“由 score 得到速度”的公式，得到
-
-$$
-u(\tau,y)
-\mathrel{=}
--\frac12\beta(\tau)y
-\mathbin{-}
-\frac12\beta(\tau)s_\tau(y),
-$$
-
-正是式 (11.1) 的概率流 ODE 速度。生成时从 $y_T$ 出发，将这条 ODE 沿 $\tau:T\to0$ 积分。它不注入新噪声，因此给定 $y_T$ 后的连续轨迹是确定的。
-
-概率流 ODE 不含布朗噪声，因此是确定性过程；将第 6.5 节的反向 SDE 结论应用于 VP 过程时，所得反向 VP SDE 则保留随机噪声。两者使用同一个 score，理想情形下经过同一组单时刻边际密度，但单条轨迹不同。
-
-### 11.2 把概率流 ODE 换成噪声预测坐标
-
-把式 (9.4) 中 $s_\theta=-\varepsilon_\theta/\sigma$ 的 score 参数化代入概率流 ODE (11.1)，得到
+得到噪声预测形式
 
 $$
 \boxed{
@@ -2817,56 +2562,104 @@ $$
 \frac{\varepsilon_\theta(y_\tau,\tau)}
 {\sigma(\tau)}.
 }
-\tag{11.2}
+\tag{20.2}
 $$
 
-式 (11.2) 并不是另一条新 ODE，只是式 (11.1) 的噪声预测参数化。为了将它离散化，定义归一化状态和噪声—信号比
+> **备注：式 (20.1) 和式 (20.2) 如何由前文直接得到？**
+>
+> 由式 (10.5)，把前向 SDE 的漂移记为 $f$，则
+>
 
 $$
-R_\tau
-:=
-\frac{y_\tau}{a(\tau)},
+f=b+\epsilon s,
 \qquad
-\lambda(\tau)
-:=
-\frac{\sigma(\tau)}{a(\tau)}.
+\epsilon=\frac12g^2,
 $$
 
-由 $\dot a/a=-\beta/2$ 和 $a^2+\sigma^2=1$，式 (11.2) 可以等价地改写成
+>
+> 因而概率流 ODE 的速度为
+>
 
 $$
-\boxed{
-\frac{\mathrm dR_\tau}{\mathrm d\lambda}
+b=f-\frac12g^2s.
+$$
+
+>
+> 再由式 (17.3)
+>
+
+$$
+f=-\frac12\beta(\tau)y,
+\qquad
+g^2=\beta(\tau),
+$$
+
+>
+> 直接得到式 (20.1)。最后代入式 (16.2)
+>
+
+$$
+s_\theta=-\frac{\varepsilon_\theta}{\sigma},
+$$
+
+>
+> 即得到式 (20.2)。
+
+生成时从噪声端 $y_T$ 出发，沿 $\tau:T\to0$ 反向积分。
+
+概率流 ODE 不注入新的布朗噪声，因此给定同一个 $y_T$ 后，连续轨迹是确定的。
+
+---
+
+## 21. 从概率流 ODE 到确定性 DDIM
+
+在离散时刻，沿用第 18 节的定义
+
+$$
+\alpha_k=1-\beta_k,
+\qquad
+\bar\alpha_k=\prod_{j=1}^k\alpha_j,
+$$
+
+令
+
+$$
+a_k
 \mathrel{=}
-\varepsilon_\theta(y_\tau,\tau).
-}
+\sqrt{\bar\alpha_k}
+\mathrel{=}
+\sqrt{\prod_{j=1}^k(1-\beta_j)},
+\qquad
+\sigma_k=\sqrt{1-\bar\alpha_k}.
 $$
 
-也就是说，在 $(\lambda,R)$ 坐标下，概率流 ODE 的速度正好是网络预测的噪声。这一换元是从连续 ODE 过渡到 DDIM 更新的关键。
-
-### 11.3 离散确定性生成：DDIM 更新
-
-在离散网格时刻 $\tau_k$，连续系数 $a(\tau)$、$\sigma(\tau)$ 与第 10.2 节的离散累计信号保留比例对应为
+因此相邻时刻满足
 
 $$
 \boxed{
-a(\tau_k)=\sqrt{\bar\alpha_k},
+a_k=a_{k-1}\sqrt{1-\beta_k},
 \qquad
-\sigma(\tau_k)=\sqrt{1-\bar\alpha_k}.
+\beta_k=1-\frac{a_k^2}{a_{k-1}^2}.
 }
 $$
 
-因此，下面的离散变量正是第 11.2 节中连续变量在时间网格上的取值。
+当它来自第 20 节连续 VP schedule 的离散化时，
 
-在时刻 $k$，网络先预测
+$$
+\beta_k\approx\beta(\tau_k)\Delta\tau,
+\qquad
+a_k\approx a(\tau_k).
+$$
+
+给定 $y_k$，先预测
 
 $$
 \widehat\varepsilon_k
-:=
+\mathrel{=}
 \varepsilon_\theta(y_k,k),
 $$
 
-并由式 (10.6) 计算
+再计算
 
 $$
 \widehat y_0
@@ -2878,49 +2671,7 @@ y_k-\sqrt{1-\bar\alpha_k}\widehat\varepsilon_k
 }.
 $$
 
-记
-
-$$
-R_k
-\mathrel{=}
-\frac{y_k}{\sqrt{\bar\alpha_k}},
-\qquad
-\lambda_k
-\mathrel{=}
-\sqrt{
-\frac{1-\bar\alpha_k}{\bar\alpha_k}
-}.
-$$
-
-在区间 $[\lambda_k,\lambda_{k-1}]$ 内暂时使用当前预测 $\widehat\varepsilon_k$，对 $\mathrm dR/\mathrm d\lambda=\varepsilon_\theta$ 做一步一阶离散：
-
-$$
-R_{k-1}
-\approx
-R_k
-\mathbin{+}
-(\lambda_{k-1}-\lambda_k)\widehat\varepsilon_k.
-$$
-
-又因为
-
-$$
-\widehat y_0
-\mathrel{=}
-R_k-\lambda_k\widehat\varepsilon_k,
-$$
-
-所以上式等价于
-
-$$
-R_{k-1}
-\approx
-\widehat y_0
-\mathbin{+}
-\lambda_{k-1}\widehat\varepsilon_k.
-$$
-
-两边乘以 $\sqrt{\bar\alpha_{k-1}}$，得到
+确定性 DDIM 更新为
 
 $$
 \boxed{
@@ -2928,74 +2679,388 @@ y_{k-1}
 \mathrel{=}
 \sqrt{\bar\alpha_{k-1}}\widehat y_0
 \mathbin{+}
-\sqrt{1-\bar\alpha_{k-1}}\widehat\varepsilon_k.
+\sqrt{1-\bar\alpha_{k-1}}
+\widehat\varepsilon_k.
 }
-\tag{11.3}
+\tag{21.1}
 $$
 
-式 (11.3) 就是确定性 DDIM 更新。它没有像式 (10.11) 那样加入新的 $\xi_k$，因此给定同一个 $y_K$ 后，整条离散轨迹是确定的。
+它没有加入新的随机变量 $\xi_k$。因此给定同一个 $y_K$ 后，整条离散轨迹是确定的。
 
-需要准确区分：有限步 DDIM 是换元后概率流 ODE 的一阶离散近似，不是每一步的精确解析解。当网格逐渐变细时，它与 VP 概率流 ODE 建立连续极限下的对应。DDIM 还可以跳过部分时间点，因此通常能用比 DDPM 更少的网络调用完成采样。
+> **备注：DDIM 不是把 DDPM 中的 $\xi_k$ 直接设成零**
+>
+> 把 DDIM 式 (21.1) 展开，并使用 $\bar\alpha_k=\alpha_k\bar\alpha_{k-1}$，得到
+>
+
+$$
+\begin{aligned}
+y_{k-1}^{\mathrm{DDIM}}
+&=
+\frac1{\sqrt{\alpha_k}}y_k
+\\
+&\quad+
+\left[
+\sqrt{1-\bar\alpha_{k-1}}
+\mathbin{-}
+\frac{\sqrt{1-\bar\alpha_k}}{\sqrt{\alpha_k}}
+\right]
+\widehat\varepsilon_k.
+\end{aligned}
+$$
+
+>
+> 而 DDPM 只令 $\xi_k=0$ 时得到的是
+>
+
+$$
+y_{k-1}^{\mathrm{DDPM\ mean}}
+\mathrel{=}
+\frac1{\sqrt{\alpha_k}}y_k
+\mathbin{-}
+\frac{\beta_k}
+{\sqrt{\alpha_k}\sqrt{1-\bar\alpha_k}}
+\widehat\varepsilon_k.
+$$
+
+>
+> 两个噪声系数通常不相等。因此 DDIM 不只是删除随机项，它同时更换了确定性漂移：DDPM 均值属于反向 SDE/高斯链，DDIM 更新对应概率流 ODE 的确定性输运。
+
+
+定义
+
+$$
+R_\tau:=\frac{y_\tau}{a(\tau)},
+\qquad
+\lambda(\tau):=\frac{\sigma(\tau)}{a(\tau)}.
+$$
+
+VP 概率流 ODE 可以改写为
+
+$$
+\boxed{
+\frac{\mathrm dR_\tau}{\mathrm d\lambda}
+\mathrel{=}
+\varepsilon_\theta(y_\tau,\tau).
+}
+\tag{21.2}
+$$
+
+> **备注：式 (21.2) 怎样一步得到 DDIM 更新？**
+>
+> 先验证变量变换。因为 $R=y/a$，
+>
+
+$$
+\frac{\mathrm dR}{\mathrm d\tau}
+\mathrel{=}
+\frac1a
+\left(
+\frac{\mathrm dy}{\mathrm d\tau}
+\mathbin{-}
+\frac{\dot a}{a}y
+\right).
+$$
+
+>
+> 对 VP 路径，$\dot a/a=-\beta/2$。代入式 (20.2) 后，两个与 $y$ 成正比的项抵消：
+>
+
+$$
+\frac{\mathrm dR}{\mathrm d\tau}
+\mathrel{=}
+\frac{\beta}{2a\sigma}
+\varepsilon_\theta.
+$$
+
+>
+> 另一方面，$\lambda=\sigma/a$ 且 $\sigma^2=1-a^2$，可以算得
+>
+
+$$
+\frac{\mathrm d\lambda}{\mathrm d\tau}
+\mathrel{=}
+\frac{\beta}{2a\sigma}.
+$$
+
+>
+> 两式相除就得到 $\mathrm dR/\mathrm d\lambda=\varepsilon_\theta$。
+>
+> 从第 $k$ 个噪声水平反向走到第 $k-1$ 个水平，并在这一小段内暂时把 $\widehat\varepsilon_k$ 看作常数，一阶积分给出
+>
+
+$$
+R_{k-1}
+\approx
+R_k
+\mathbin{+}
+(\lambda_{k-1}-\lambda_k)
+\widehat\varepsilon_k.
+$$
+
+>
+> 代入 $R_k=y_k/a_k$、$\lambda_k=\sigma_k/a_k$，再乘以 $a_{k-1}$：
+>
+
+$$
+y_{k-1}
+\mathrel{=}
+a_{k-1}
+\frac{y_k-\sigma_k\widehat\varepsilon_k}{a_k}
+\mathbin{+}
+\sigma_{k-1}\widehat\varepsilon_k.
+$$
+
+>
+> 第一项括号正是 $\widehat y_0$，于是
+>
+
+$$
+y_{k-1}
+\mathrel{=}
+a_{k-1}\widehat y_0
+\mathbin{+}
+\sigma_{k-1}\widehat\varepsilon_k,
+$$
+
+>
+> 也就是式 (21.1)。
+
+> **备注：有限步 DDIM 是否等于概率流 ODE 的精确解？**
+>
+> 一般不等于。更准确的说法是：
+>
+> - 确定性 DDIM 可以看成特定变量坐标下的一阶离散更新；
+> - 当网格逐渐变细时，它与 VP 概率流 ODE 具有相同的连续极限；
+> - 有限步时，不同 ODE 求解器和 DDIM 更新会产生不同的数值轨迹。
 
 ---
 
-## 12. DDPM 与 DDIM：共享同一前向边际与预测器的两种采样方式
+## 21. DDPM 与 DDIM 的关系
 
 | 比较对象 | DDPM | 确定性 DDIM |
 |---|---|---|
-| 式 (2.1) 规定的高斯边际 | 相同 | 相同 |
-| 噪声预测器 $\varepsilon_\theta$ | 相同 | 相同 |
-| 连续时间对应 | 反向 VP SDE | 概率流 ODE |
-| 离散反向更新 | 每步加入新噪声 | 不加入新噪声 |
-| 给定初始 $y_K$ 后 | 轨迹仍然随机 | 轨迹确定 |
+| 训练时使用的高斯边际 | 相同 | 相同 |
+| 常用噪声预测器 | 可以相同 | 可以相同 |
+| 连续极限/解释 | 反向 VP SDE | VP 概率流 ODE |
+| 每个反向步 | 加入新噪声 | 不加入新噪声 |
+| 给定同一个初始 $y_K$ | 轨迹仍随机 | 轨迹确定 |
 
-所以，DDIM 通常不需要重新训练模型；它主要改变采样动力学和离散更新方式。
+因此，DDIM 通常可以复用 DDPM 的噪声预测网络，主要改变的是生成动力学和离散更新。
 
-![VP 前向路径、反向 SDE、概率流 ODE、DDPM 与 DDIM 的关系](assets/unified-diffusion/vp-sde-ode-ddpm-ddim-concept-map.png)
+统一框架并不是说 DDPM 和 DDIM 的轨迹相同，而是说：
 
-*图 2：同一组 VP 前向加噪边际和同一个噪声预测器，可以连接到随机的反向 VP SDE 与离散 DDPM，也可以连接到确定性的 VP 概率流 ODE 与离散 DDIM。本图按本文的符号和逻辑重绘。*
+$$
+\boxed{
+\text{它们可以围绕同一组前向边际和同一预测器，
+采用随机或确定性的不同生成方式。}
+}
+$$
 
 ---
 
-## 13. 最终统一视角
+# 第五部分：论文 v4 的实验告诉我们什么
 
-### 13.1 统一对象
+前面的结论主要处于“精确场、精确 score、精确求解”的理想层面。论文 v4 的实验进一步研究：当网络和数值求解都不完美时，路径噪声 $\gamma$、生成扩散强度 $\epsilon$、ODE/SDE 选择以及网络参数化会怎样影响结果。
 
-| 方法 | 先规定什么 | 学习什么 | 生成方式 |
+必须先说明：这些实验是论文特定数据、网络和求解器下的结果，不构成“SDE 永远优于 ODE”或“某个 $\epsilon$ 对所有任务最优”的证明。
+
+## 23. 二维 checkerboard：$\gamma$ 与 $\epsilon$ 的作用不同
+
+论文从
+
+$$
+\rho_0=\mathcal N(0,\mathrm{Id})
+$$
+
+出发，学习一个边界较尖锐的二维 checkerboard 目标分布。$v$ 和 $s$ 都使用四层、每层 512 个单元的 ReLU 网络。训练后，论文分别用 ODE（$\epsilon=0$）以及
+
+$$
+\epsilon\in\{0.5,1.0,2.5\}
+$$
+
+的 SDE 生成 300,000 个样本，并用核密度估计比较结果。
+
+![论文图 7：不同 $\gamma$ 与 $\epsilon$ 下的二维生成密度](images/paper-figure-07-qualitative.png)
+
+*论文图 7：列方向改变插值的 $\gamma(t)$，行方向改变生成动力学的 $\epsilon$。$\epsilon=0$ 是概率流 ODE，$\epsilon>0$ 是同边际 SDE。来源：[论文 v4, Figure 7](https://arxiv.org/abs/2303.08797v4)。*
+
+这张图验证了两个旋钮的分工：
+
+- $\gamma$ 在训练时改变中间边际和需要学习的场；
+- $\epsilon$ 在生成时改变 ODE/SDE 的轨迹随机性；
+- 对精确场，固定 $\gamma$ 后边际理论上不依赖 $\epsilon$；图中差异来自学习误差和数值误差；
+- 在该实验中，SDE 通常优于 ODE，但 $\gamma(t)=\sqrt{t(1-t)}$ 对应的 ODE 已明显更好，ODE 与 SDE 的差距也最小；
+- $\epsilon$ 较大时需要更小的数值步长，不能只比较随机强度而忽略计算预算。
+
+
+> **备注：这里能得出什么结论？**
+>
+> 能得出的结论是：在有限网络误差下，适量 SDE 随机性可能比纯 ODE 更稳健，而且 $\gamma$ 的路径设计会影响差距。不能得出“$\epsilon$ 越大越好”，因为大扩散需要更多求解步，且过强扩散也可能降低精度。
+
+---
+
+## 24. Oxford Flowers：同一个初始噪声可以继续分叉
+
+论文还在 $128\times128$ Oxford Flowers 数据集上训练 one-sided 线性和三角插值，使用与 DDPM 类似的 U-Net 参数化 $b$、$s$ 或 denoiser。下面各列从相同初始噪声出发：ODE 使用 $\epsilon=0$，SDE 使用逐渐增大的 $\epsilon$。
+
+![论文图 13：Oxford Flowers 上的 ODE 与 SDE 生成](images/paper-figure-13-flowers.png)
+
+*论文图 13：ODE 用自适应 dopri5；SDE 在 $\epsilon=1,2,4$ 时分别使用 2,000、2,500、4,000 个 Heun 步。固定初始噪声后，ODE 输出唯一；SDE 因生成途中持续加入布朗增量而能得到不同花朵，且图中多样性随 $\epsilon$ 增加。来源：[论文 v4, Figure 13](https://arxiv.org/abs/2303.08797v4)。*
+
+![论文图 14：生成样本与训练集近邻](images/paper-figure-14-nearest-neighbors.png)
+
+*论文图 14：顶部是一个生成样本，底部是训练集中按 $\ell_1$ 距离找到的五个近邻。近邻在视觉上不同，作为模型没有直接复制该样本的辅助检查。来源：[论文 v4, Figure 14](https://arxiv.org/abs/2303.08797v4)。*
+
+> **备注：这是不是大规模图像生成性能证明？**
+>
+> 不是。论文明确把图像实验定位为框架可扩展性的展示，没有报告 ImageNet、FID 等标准基准。最近邻图也是“未发现直接复制”的辅助证据，不是严格的隐私或记忆性证明。
+
+---
+
+## 25. 从实验得到的实际选择建议
+
+| 实际目标 | 更合适的起点 | 原因 |
+|---|---|---|
+| 少步、快速、固定 latent 可复现 | ODE / DDIM 类求解 | 无新增随机性，容易使用高阶求解器 |
+| 同一条件下产生多个合理结果 | SDE | 固定初始状态后仍可随机分叉 |
+| 有限模型误差下追求稳健质量 | 调过 $\epsilon$ 的 SDE | 论文实验显示适量扩散可能减轻过度集中 |
+| 同时要速度与稳健性 | 混合采样 | 高噪声阶段保留随机性，接近数据端逐渐令 $\epsilon\to0$ |
+
+最稳妥的工程方式是让同一个模型支持 ODE 与 SDE 两种采样器，再在验证集上联合选择：
+
+$$
+\boxed{
+\gamma(t)\text{（训练边际路径）},
+\quad
+\epsilon(t)\text{（生成随机性）},
+\quad
+\text{求解步数与求解器}.
+}
+$$
+
+论文实验支持“合适的非零 $\epsilon$ 可能优于 $\epsilon=0$”，但同时表明扩散强度过大或步数不足都会损害结果。因此不存在脱离模型误差和计算预算的统一最优 ODE/SDE 选择。
+
+---
+
+# 第六部分：最终统一视角
+
+## 27. 从双端点公式到常见方法
+
+### 27.1 Flow Matching 分支
+
+从
+
+$$
+x_t=I(t,x_0,x_1)+\gamma(t)z
+$$
+
+令
+
+$$
+\gamma(t)=0,
+$$
+
+得到
+
+$$
+x_t=I(t,x_0,x_1),
+\qquad
+Y_t=\partial_tI.
+$$
+
+再选择线性 $I$：
+
+$$
+I=(1-t)x_0+tx_1,
+$$
+
+得到
+
+$$
+Y_t=x_1-x_0,
+$$
+
+也就是 linear Flow Matching / Rectified Flow 的基础训练形式。
+
+### 27.2 Diffusion 分支
+
+从高斯基分布出发，取 one-sided 线性插值
+
+$$
+x_t=\alpha(t)z+\beta(t)x_1.
+$$
+
+反转为数据到噪声时间：
+
+$$
+y_\tau=a(\tau)y_0+\sigma(\tau)\varepsilon.
+$$
+
+选择 VP schedule：
+
+$$
+a^2+\sigma^2=1,
+$$
+
+先得到 VP diffusion 使用的固定时刻高斯边际；再额外选择与这些边际一致的 VP Markov 动力学，才得到：
+
+$$
+\boxed{
+\begin{array}{c}
+\text{另行选择前向 VP SDE}
+\longrightarrow
+\text{DDPM 前向链}
+\\[1mm]
+\text{score/noise 网络}
+\longrightarrow
+\begin{cases}
+\text{反向 SDE / DDPM},\\
+\text{概率流 ODE / DDIM}.
+\end{cases}
+\end{array}}
+$$
+
+---
+
+## 28. 方法对照表
+
+| 方法 | 在统一框架中选择什么 | 学习什么 | 怎样生成 |
 |---|---|---|---|
-| Stochastic Interpolant | 双端点随机插值边际 $\rho(t)$ | 条件平均速度、score | ODE 或同边际 SDE |
-| Flow Matching | 条件概率路径或端点插值 | 条件速度的边际平均 | ODE |
-| Rectified Flow | 线性端点插值 | $x_1-x_0$ 的条件平均 | ODE |
-| Score-based diffusion | 数据到噪声的前向高斯加噪边际 | score 或等价噪声 | 反向 SDE / 概率流 ODE |
-| DDPM | 离散 VP 加噪链 | 噪声或等价 score | 随机反向马尔可夫链 |
-| DDIM | 与 DDPM 相同的训练扰动边际 | 同一个预测器 | 确定性更新 |
+| Stochastic Interpolant | 一般 $I,\nu,\gamma$ | 总速度 $b$，可选 score/denoiser | ODE 或同边际 SDE |
+| Endpoint Flow Matching | $\gamma=0$ | $\partial_tI$ 的条件平均 | ODE |
+| Linear Flow Matching | $I=(1-t)x_0+tx_1$ | $x_1-x_0$ 的条件平均 | ODE |
+| Rectified Flow | 线性 FM 加重新配对/reflow | 更接近当前生成耦合的线性速度 | ODE |
+| VP diffusion | one-sided Gaussian 路径与 VP schedule | noise、score 或等价 velocity | 反向 SDE或概率流 ODE |
+| DDPM | 离散 VP 前向链 | 常用 noise prediction | 随机反向高斯链 |
+| DDIM | 与 DDPM 共享训练边际和预测器 | 通常不重新训练 | 确定性离散更新 |
 
-### 13.2 最关键的两条证明链
+---
 
-第一条是 ODE：
+## 29. 两条最关键的证明链
+
+### 29.1 ODE
 
 $$
 \boxed{
 \begin{aligned}
 x_t\sim\rho
 &\Longrightarrow
-u=\mathbb E[\dot x_t\mid x_t=x],
+b=\mathbb E[\dot x_t\mid x_t=x],
 \\
-\partial_t\rho+\nabla\cdot(\rho u)&=0,
-\\
-\dot X_t=u(t,X_t),\quad X_t\sim q
 &\Longrightarrow
-\partial_tq+\nabla\cdot(qu)=0,
+\partial_t\rho+\nabla\cdot(\rho b)=0,
 \\
-\text{同一 PDE}+\text{同一初值}+\text{唯一性}
+\dot X_t=b(t,X_t),\quad X_t\sim q
+&\Longrightarrow
+\partial_tq+\nabla\cdot(qb)=0,
+\\
+\text{同一 PDE、同一初值、唯一性}
 &\Longrightarrow
 q=\rho.
-\end{aligned}
-}
-\tag{13.1}
+\end{aligned}}
 $$
 
-第二条是 SDE：
+### 29.2 SDE
 
 $$
 \boxed{
@@ -3003,49 +3068,50 @@ $$
 s&=\nabla\log\rho,
 \\
 \mathrm dZ_t
-&=
-(u+\kappa s)(t,Z_t)\,\mathrm dt
-\mathbin{+}
-\sqrt{2\kappa(t)}\,\mathrm dW_t,
+&=(b+\epsilon s)\,\mathrm dt
++\sqrt{2\epsilon}\,\mathrm dW_t,
 \\
 \rho s&=\nabla\rho
 \\
 &\Longrightarrow
-\text{$\rho$ 满足该 SDE 的 Fokker--Planck 方程}
+\text{score 漂移流量与扩散流量抵消}
 \\
 &\Longrightarrow
 p=\rho.
-\end{aligned}
-}
-\tag{13.2}
+\end{aligned}}
 $$
 
-### 13.3 一句话总结
+---
+
+## 30. 一句话总结
 
 $$
 \boxed{
 \begin{gathered}
-\text{随机插值负责设计和监督一条概率路径，}
+\text{双端点随机插值负责设计一条概率路径；}
 \\
-\text{Flow Matching 学习实现该路径的条件平均速度，}
+\text{条件期望回归负责学习实现该路径的速度或 score；}
 \\
-\text{score 决定如何在不改变边际的情况下加入或反转随机扩散，}
+\text{ODE 与适当 SDE 可以在理想条件下复现同一组边际；}
 \\
-\text{DDPM 与 DDIM 复用同一前向加噪边际，并采用随机或确定性的离散反向更新。}
-\end{gathered}
-}
+\text{Flow Matching 是无额外 latent noise 的端点速度回归；}
+\\
+\text{one-sided Gaussian 路径给出固定时刻边际，}
+\\
+\text{VP SDE 与 DDPM 还需要额外选择 Markov 加噪动力学；}
+\\
+\text{DDPM 与 DDIM 复用相同的前向边际和预测器，
+但采用随机或确定性的不同反向动力学。}
+\end{gathered}}
 $$
-
-ODE、SDE、DDPM 和 DDIM 的轨迹结构不同，有限步近似也不同；统一之处主要在于它们可以围绕同一组随时间变化的边际分布、同一类条件期望回归以及相互转换的速度/score 参数化来理解。
 
 ---
 
 ## 参考文献
 
-1. Michael S. Albergo, Nicholas M. Boffi, Eric Vanden-Eijnden, [*Stochastic Interpolants: A Unifying Framework for Flows and Diffusions*](https://arxiv.org/abs/2303.08797), arXiv:2303.08797v4.
-2. Yaron Lipman, Ricky T. Q. Chen, Heli Ben-Hamu, Maximilian Nickel, Matt Le, [*Flow Matching for Generative Modeling*](https://arxiv.org/abs/2210.02747), ICLR 2023.
-3. Xingchao Liu, Chengyue Gong, Qiang Liu, [*Flow Straight and Fast: Learning to Generate and Transfer Data with Rectified Flow*](https://arxiv.org/abs/2209.03003), ICLR 2023.
-4. Jonathan Ho, Ajay Jain, Pieter Abbeel, [*Denoising Diffusion Probabilistic Models*](https://arxiv.org/abs/2006.11239), NeurIPS 2020.
-5. Jiaming Song, Chenlin Meng, Stefano Ermon, [*Denoising Diffusion Implicit Models*](https://arxiv.org/abs/2010.02502), ICLR 2021.
-6. Yang Song, Jascha Sohl-Dickstein, Diederik P. Kingma, Abhishek Kumar, Stefano Ermon, Ben Poole, [*Score-Based Generative Modeling through Stochastic Differential Equations*](https://arxiv.org/abs/2011.13456), ICLR 2021.
-7. Preetum Nakkiran, Arwen Bradley, Hattie Zhou, Madhu Advani, [*Step-by-Step Diffusion: An Elementary Tutorial*](https://arxiv.org/abs/2406.08929), arXiv:2406.08929.
+1. Michael S. Albergo, Nicholas M. Boffi, Eric Vanden-Eijnden, [Stochastic Interpolants: A Unifying Framework for Flows and Diffusions](https://arxiv.org/abs/2303.08797), arXiv:2303.08797v4.
+2. Yaron Lipman, Ricky T. Q. Chen, Heli Ben-Hamu, Maximilian Nickel, Matt Le, [Flow Matching for Generative Modeling](https://arxiv.org/abs/2210.02747), ICLR 2023.
+3. Xingchao Liu, Chengyue Gong, Qiang Liu, [Flow Straight and Fast: Learning to Generate and Transfer Data with Rectified Flow](https://arxiv.org/abs/2209.03003), ICLR 2023.
+4. Jonathan Ho, Ajay Jain, Pieter Abbeel, [Denoising Diffusion Probabilistic Models](https://arxiv.org/abs/2006.11239), NeurIPS 2020.
+5. Jiaming Song, Chenlin Meng, Stefano Ermon, [Denoising Diffusion Implicit Models](https://arxiv.org/abs/2010.02502), ICLR 2021.
+6. Yang Song, Jascha Sohl-Dickstein, Diederik P. Kingma, Abhishek Kumar, Stefano Ermon, Ben Poole, [Score-Based Generative Modeling through Stochastic Differential Equations](https://arxiv.org/abs/2011.13456), ICLR 2021.
