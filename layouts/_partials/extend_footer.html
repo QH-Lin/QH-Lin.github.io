@@ -39,3 +39,24 @@
     });
   })();
 </script>
+
+<script>
+  (() => {
+    const diagrams = document.querySelectorAll('.mermaid');
+    if (diagrams.length === 0) return;
+
+    const script = document.createElement('script');
+    script.src = 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js';
+    script.addEventListener('load', async () => {
+      const darkMode = window.matchMedia('(prefers-color-scheme: dark)').matches;
+      mermaid.initialize({
+        startOnLoad: false,
+        theme: darkMode ? 'dark' : 'default',
+        securityLevel: 'strict'
+      });
+      await mermaid.run({ nodes: diagrams });
+    });
+    document.head.appendChild(script);
+  })();
+</script>
+
