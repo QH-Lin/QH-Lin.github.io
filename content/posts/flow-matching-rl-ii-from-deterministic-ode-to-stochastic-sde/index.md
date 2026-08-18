@@ -1,5 +1,5 @@
 ---
-title: "流匹配的强化学习（二）：从确定性 ODE 到随机 SDE"
+title: "流匹配的RL（二）：ODE强化学习的四种方式"
 date: 2026-08-10T12:05:39+08:00
 draft: false
 tags:
@@ -15,114 +15,95 @@ math: true
 mermaid: true
 ---
 
-## 为什么有些 Flow Matching RL 必须随机化，而另一些不需要
+## Flow Matching 接入奖励信息的四种方式
 
-这篇文章只回答一个问题：**一个已经训练好的 Flow Matching 模型，怎样接入奖励优化？**
+已经训练好的 Flow Matching 模型可以通过四种方式利用奖励或 RL 经验。前三种直接更新当前策略，第四种则把其他策略产生的经验吸收到通用模型中：
 
-最容易误解的结论是“Flow Matching 必须从 ODE 变成 SDE 才能做强化学习”。更准确的表述是：
+1. **同边际 SDE**：使用 score 补偿把概率流 ODE 改写成随机 SDE，再用每个内部去噪步的 Gaussian likelihood ratio 进行 PPO/GRPO 更新，代表方法包括 Flow-GRPO 和 Flow-SDE。
+2. **离散随机策略**：直接给有限步 flow 定义 Gaussian Markov 转移，并优化内部路径 likelihood，代表方法包括 ReinFlow 和 Flow-Noise。
+3. **奖励驱动的回归目标**：用奖励加权 Flow Matching 或奖励修正回归更新 velocity，不依赖逐步 SDE likelihood，代表方法包括 RWFM 和 RAM。
+4. **条件式经验吸收**：$\pi_{0.7}$ 把 RL specialist 的 rollout 与其他异质数据一起加入监督训练，并用质量、错误和速度等条件区分不同数据模式；它本身不执行在线策略梯度。
 
-> 如果把内部去噪步当作策略动作，并使用 PPO/GRPO 的逐步 likelihood ratio，那么确定性的 ODE 转移必须先被随机化；同边际 SDE 是最自然的一种构造。若改用奖励加权回归、Flow Matching 代理似然或 adjoint-matching 回归，则训练 rollout 不一定需要 SDE。
+本文是[《流匹配的 RL（一）：统一理解 Diffusion、Flow Matching 及 ODE、SDE》](/posts/flow-matching-rl-from-unified-diffusion-and-flow-matching/)的续篇。第一篇已经推导随机插值、连续性方程、概率流 ODE、同边际 SDE 以及 velocity/score 转换；本文只保留这些结论的接口，重点介绍相关论文将它们用于 RL 的具体方式。
 
-本文是[《流匹配的 RL（一）：统一理解 Diffusion 与 Flow Matching》](/posts/flow-matching-rl-from-unified-diffusion-and-flow-matching/)的续篇。第一篇已经推导随机插值、连续性方程、概率流 ODE、同边际 SDE 以及 velocity/score 转换；本文只保留这些结论的接口，重点放在相关论文究竟怎样把它们用于 RL。
+> **时间约定。** 本文主要使用“生成时间 $0\to1$：噪声到数据”，并明确区分概率流速度、SDE 漂移与布朗噪声幅度。引用论文使用相反时间方向时，会单独说明端点和采样步长。连续时间同边际与有限步转移也会分开讨论。
 
 ```mermaid
 flowchart TD
-    A["预训练 Flow Matching 模型"] --> B["奖励优化需要什么接口？"]
+    A["Flow Matching 策略"] --> B["奖励或 RL 经验如何进入训练"]
     B --> C["精确的逐步策略似然比"]
-    B --> D["可以接受回归或代理目标"]
-    B --> E["只做推理时搜索或引导"]
+    B --> D["可以接受奖励驱动的回归目标"]
+    B --> E["已有 RL specialist 轨迹"]
 
     C --> C1["同边际 ODE→SDE<br/>Flow-GRPO / Flow-SDE"]
     C --> C2["直接注入离散 Markov 噪声<br/>ReinFlow / Flow-Noise"]
-    C1 --> C3["有限步采样修正<br/>CPS / PRECISE"]
-
     D --> D1["奖励加权 Flow Matching<br/>ORW-CFM-W2 / RWFM"]
-    D --> D2["Flow Matching 代理似然<br/>FPO"]
-    D --> D3["奖励修正的回归目标<br/>RAM"]
-
-    E --> E1["转移采样而非在线 RL<br/>GLASS Flows"]
+    D --> D2["奖励修正的回归目标<br/>RAM"]
 
     C1 --> F["更新后的 flow policy"]
     C2 --> F
     D1 --> F
     D2 --> F
-    D3 --> F
-    F --> G["RL 经验还可蒸馏进条件式 FM<br/>π0.7"]
+    E --> G["带质量条件的监督式吸收<br/>π0.7"]
+    F --> G
 ```
 
 ---
 
-## 1. 从第一篇接过来的最小数学接口
+## 1. 从 Linear Flow Matching 接入奖励优化
 
-### 1.1 ODE 定义模型，SDE 重写路径
-
-给定条件 $c$，预训练模型输出速度场 $u_\theta(t,x,c)$。本文采用 $t=0$ 为噪声、$t=1$ 为数据的方向：
-
-$$
-\frac{\mathrm dX_t}{\mathrm dt}
-=u_\theta(t,X_t,c),
-\qquad X_0\sim p_0.
-\tag{1.1}
-$$
-
-记 ODE 的单时刻边际为 $\rho_\theta(t,x\mid c)$，score 为
-
-$$
-s_\theta(t,x,c)=\nabla_x\log\rho_\theta(t,x\mid c).
-\tag{1.2}
-$$
-
-对任意 $\kappa(t)\ge0$，可以构造
-
-$$
-\boxed{
-\mathrm dZ_t
-=\bigl(u_\theta+\kappa s_\theta\bigr)(t,Z_t,c)\,\mathrm dt
-+\sqrt{2\kappa(t)}\,\mathrm dW_t.
-}
-\tag{1.3}
-$$
-
-在相同初始分布、精确 score 和适当正则性条件下，
-
-$$
-\mathcal L(Z_t)=\mathcal L(X_t)=\rho_\theta(t),
-\qquad 0\le t\le1.
-\tag{1.4}
-$$
-
-这只表示 ODE 与 SDE 具有相同的**单时刻边际**，不表示它们具有相同轨迹、联合分布或条件转移。恰恰是这些路径级差异，为 RL 提供了探索和路径似然。
-
-对 Rectified Flow 的线性路径
+第一篇第四部分第 13 节给出了 Linear Flow Matching / Rectified Flow 的基础形式。训练时，从噪声端点 $x_0$ 和数据端点 $x_1$ 构造线性路径
 
 $$
 x_t=(1-t)x_0+t x_1,
-\qquad x_0\sim\mathcal N(0,I),
-\tag{1.5}
+\qquad
+x_0\sim\mathcal N(0,I),\quad t:0\to1.
 $$
 
-理想 velocity 与 score 之间满足
+这条训练路径的速度标签为
+
+$$
+Y_t=x_1-x_0.
+$$
+
+模型通过第一篇式 (13.1) 学习条件平均速度：
 
 $$
 \boxed{
-s(t,x)=\frac{t\,u(t,x)-x}{1-t}.
+\mathcal L_{\mathrm{FM}}(\theta)
+\mathrel{=}
+\mathbb E
+\left\|
+b_\theta\bigl(t,(1-t)x_0+t x_1,c\bigr)
+-(x_1-x_0)
+\right\|^2.
 }
-\tag{1.6}
 $$
 
-因此，已有 velocity 模型通常可以提供式 (1.3) 所需的 score 补偿。端点附近的除法、模型误差以及相反时间方向会改变具体实现；完整推导见第一篇第 10、13、16 节。
+训练完成后，模型从高斯噪声出发，沿学习到的速度场运行 ODE：
 
-### 1.2 三种时间不能混为一谈
+$$
+\boxed{
+\frac{\mathrm dX_t}{\mathrm dt}
+=b_\theta(t,X_t,c),
+\qquad
+X_0\sim\mathcal N(0,I).
+}
+$$
+
+因此，预训练 Flow Matching 模型通常提供的是一个确定性 ODE 生成器。第 2 章先解释奖励优化需要什么概率接口，第 3–6 章讨论如何直接更新这类模型；第 7 章则讨论另一种情况：不对当前模型做在线 RL，而是让通用 Flow Matching 策略监督学习已有 RL specialist 的行为数据。
+
+### 1.1 三种时间不能混为一谈
 
 | 记号 | 含义 |
 |---|---|
-| $t\in[0,1]$ | 连续的 Flow Matching 生成时间 |
+| $t\in[0,1]$ | 连续的 Flow Matching 生成时间；$0$ 是噪声，$1$ 是数据或动作 |
 | $k=0,\ldots,K$ | 数值求解器的内部去噪步 |
 | $h=0,1,\ldots,H$ | 机器人与环境交互的外层决策时间 |
 
-图像生成通常只有一条内部轨迹和一个终点奖励。机器人策略则在每个环境时刻 $h$ 内运行一条内部 flow，生成动作块，再进入下一个环境状态。因此，机器人论文中的“内部去噪 MDP”和“外层环境 MDP”不是同一个时间尺度。
+图像生成中，每个生成样本对应一条内部轨迹和一个终点奖励；同一 prompt 的多条样本只是并行 rollout，不会串成外层环境时间。机器人策略则在每个环境时刻 $h$ 内运行一条内部 flow，生成动作块，再进入下一个环境状态。因此，机器人论文中的“内部去噪 MDP”和“外层环境 MDP”不是同一个时间尺度。
 
-### 1.3 奖励真正想改变什么
+### 1.2 奖励优化改变终点分布
 
 设预训练终点分布为 $p_{\mathrm{ref}}(x\mid c)$。KL 正则化的奖励目标为
 
@@ -132,7 +113,7 @@ $$
 \mathbb E_{x\sim p}[R(x,c)]
 -\beta D_{\mathrm{KL}}(p\|p_{\mathrm{ref}})
 \right\}.
-\tag{1.7}
+\tag{1.1}
 $$
 
 其最优分布是奖励倾斜分布
@@ -144,81 +125,66 @@ p^*(x\mid c)
 p_{\mathrm{ref}}(x\mid c)
 \exp\!\left(\frac{R(x,c)}{\beta}\right).
 }
-\tag{1.8}
+\tag{1.2}
 $$
 
-所以 RL 后训练的目标不是给原轨迹简单加一个扰动，而是把终点概率质量移向高奖励区域。ODE→SDE 只是估计这种移动方向的一种策略接口。
+式 (1.1)–(1.2) 对固定条件下的终点奖励或 contextual-bandit 视角是精确的；在机器人序列决策中，状态访问分布也会随策略改变，不能把整段 MDP 直接缩成同一个终点分布公式。它在本文中主要提供一个共同直觉：奖励后训练要把概率质量移向高回报行为，而不是给原轨迹简单加一个扰动。ODE-to-SDE 并不决定目标分布，只是为某些 PPO/GRPO 更新提供随机策略与 likelihood 接口。
 
 ---
 
-## 2. 为什么逐步 PPO/GRPO 不能直接使用确定性 ODE
+## 2. 确定性 ODE 不支持逐步 PPO/GRPO likelihood ratio
 
-### 2.1 ODE 有样本随机性，但没有局部策略随机性
+### 2.1 ODE 不产生逐步动作概率
 
-ODE 从随机初值 $X_0$ 出发，所以最终样本当然可以多样。然而一旦给定某个中间状态，Euler 离散转移是
+ODE 本质上是一个确定函数。给定当前状态 $X_k$，它只会算出唯一的下一状态：
 
 $$
-X_{k+1}=X_k+h_k u_\theta(t_k,X_k,c),
+\boxed{
+X_k
+\xrightarrow{\text{ODE}}
+X_{k+1}.
+}
 \tag{2.1}
 $$
 
-对应条件分布
+它不会同时给出多个可能的下一状态，也不会告诉我们每个状态出现的概率。
+
+随机初始噪声可以让 ODE 生成不同的最终样本，但当某个 $X_k$ 已经确定后，这一步仍然只有一个结果。随机性来自最开始的噪声，不来自 ODE 的每一步。
+
+PPO/GRPO 需要比较：同一个动作在旧模型下的概率和在新模型下的概率。ODE 每一步只输出一个位置，不输出这个位置的概率，因此无法直接计算逐步 likelihood ratio。
 
 $$
-p_\theta(X_{k+1}\mid X_k,c)
-=\delta\!\left(
-X_{k+1}-X_k-h_k u_\theta(t_k,X_k,c)
-\right).
-\tag{2.2}
+\boxed{
+\text{ODE 输出唯一的下一位置，不输出该位置的概率。}
+}
 $$
 
-这是 Dirac 测度，不是具有普通 Lebesgue 密度的 Gaussian 策略。PPO/GRPO 需要的新旧策略比值
+### 2.2 随机 SDE 提供可计算的策略密度
 
-$$
-r_k(\theta)=
-\frac{\pi_\theta(X_{k+1}\mid X_k,c)}
-{\pi_{\theta_{\mathrm{old}}}(X_{k+1}\mid X_k,c)}
-\tag{2.3}
-$$
-
-因而不能直接照搬到确定性内部步。
-
-理论上可以通过 continuous normalizing flow 的散度积分计算终点密度：
-
-$$
-\log p_\theta(X_1)
-=\log p_0(X_0)
--\int_0^1 \nabla_x\cdot u_\theta(t,X_t)\,\mathrm dt.
-\tag{2.4}
-$$
-
-但高维散度估计、反复数值积分和少步离散误差，使它通常不适合作为大模型在线 PPO 的内循环。
-
-### 2.2 随机 SDE 怎样产生策略密度
-
-将式 (1.3) 用 Euler--Maruyama 离散：
+将与概率流 ODE 同边际的正向 SDE 用 Euler--Maruyama 离散。为避免与概率流速度 $b_\theta$ 混淆，把 SDE 漂移另记为 $a_\theta$：
 
 $$
 Z_{k+1}
-=Z_k+h_k b_\theta(t_k,Z_k,c)
-+\sqrt{2\kappa_k h_k}\,\epsilon_k,
+=Z_k+h_k a_\theta(t_k,Z_k,c)
++\sqrt{2\epsilon_k^{\mathrm{diff}} h_k}\,\xi_k,
 \qquad
-b_\theta=u_\theta+\kappa s_\theta,
-\tag{2.5}
+a_\theta(t,x,c)
+=b_\theta(t,x,c)+\epsilon(t)s_\theta(t,x,c),
+\tag{2.2}
 $$
 
-其中 $\epsilon_k\sim\mathcal N(0,I)$。于是
+其中 $h_k=t_{k+1}-t_k>0$，$\epsilon_k^{\mathrm{diff}}=\epsilon(t_k)>0$ 是扩散系数，$\xi_k\sim\mathcal N(0,I)$ 是每一步重新采样的标准高斯。于是
 
 $$
 \boxed{
 \pi_\theta(Z_{k+1}\mid Z_k,c)
 =\mathcal N
 \left(
-Z_k+h_kb_\theta(t_k,Z_k,c),
-2\kappa_kh_kI
+Z_k+h_ka_\theta(t_k,Z_k,c),
+2\epsilon_k^{\mathrm{diff}}h_kI
 \right).
 }
-\tag{2.6}
+\tag{2.3}
 $$
 
 若当前策略和参考策略使用相同协方差，一步 KL 还有闭式形式：
@@ -226,24 +192,29 @@ $$
 $$
 D_{\mathrm{KL}}(\pi_\theta\|\pi_{\mathrm{ref}})
 =\frac{\|\mu_\theta-\mu_{\mathrm{ref}}\|^2}
-{4\kappa_kh_k}.
-\tag{2.7}
+{4\epsilon_k^{\mathrm{diff}}h_k}.
+\tag{2.4}
 $$
 
-现在内部生成过程可以被视作 MDP：状态是 $(Z_k,t_k,c)$，动作是下一 latent $Z_{k+1}$，策略是式 (2.6)，奖励通常只在终点给出。
+现在内部生成过程可以被视作 MDP：状态是 $(Z_k,t_k,c)$，动作是下一 latent $Z_{k+1}$，策略是式 (2.3)，奖励通常只在终点给出。
 
-### 2.3 “必须变成 SDE”的适用范围
+### 2.3 什么时候需要随机化内部过程
 
-| 更新方式 | 是否需要 ODE→SDE | 原因 |
+确定性 ODE 的一步转移是 Dirac 分布，不能直接提供 PPO/GRPO 所需的普通概率密度。因此，如果要计算真实的内部路径 likelihood ratio，就必须引入随机转移。
+
+随机化有两种主要方式：
+
+- **Flow-GRPO / Flow-SDE**：从连续同边际 SDE 得到 Gaussian 一步转移；
+- **ReinFlow / Flow-Noise**：直接定义有限步 Gaussian 转移，不要求它来自连续 SDE。
+
+如果使用奖励驱动的回归目标，则不需要将 ODE 随机化。
+
+| 更新方式 | 是否需要随机化内部过程 | 代表方法 |
 |---|---:|---|
-| 基于内部步精确似然比的 PPO/GRPO | 通常需要随机化；同边际 SDE 是主要路线 | Dirac 转移无法提供普通密度和局部探索 |
-| 离散 Markov 噪声策略 | 需要随机化，但不必来自同边际连续 SDE | 直接定义 Gaussian 转移即可 |
-| 奖励加权 Flow Matching | 不需要 | 优化的是加权回归目标 |
-| Flow Matching 代理似然 | 不需要 | 用 CFM/ELBO 损失差替代真实 likelihood ratio |
-| 可微奖励穿过 ODE 反传 | 不需要 | 梯度来自 sampler 和 reward 的可微链路 |
-| RAM 式奖励修正回归 | rollout 不需要 | 用终点采样和解析加噪构造训练状态 |
+| 使用真实内部 likelihood ratio 的 PPO/GRPO | 需要 | Flow-GRPO、Flow-SDE、ReinFlow、Flow-Noise |
+| 使用奖励驱动的回归目标 | 不需要 | Reward-Weighted Flow Matching、RAM |
 
-这张表是全文的核心。下面按论文说明每条路线究竟做了什么。
+> **核心结论：**真正需要的是“具有可计算密度的随机转移”，不一定是某种特定形式的 SDE。
 
 ---
 
@@ -258,20 +229,50 @@ $$
 
 它的两项核心设计正好对应这两个问题：**ODE-to-SDE** 提供随机转移，**Denoising Reduction** 降低 rollout 成本。
 
-![Flow-GRPO 论文总体框架](https://arxiv.org/html/2505.05470/x2.png)
+![Flow-GRPO 论文总体框架](images/paper-hires/flow-grpo-overview.png)
 
 *图 3-1：Flow-GRPO 总体框架。模型用少步 SDE 采集成组轨迹，终点奖励经 GRPO 目标更新 velocity；图源为该论文 Figure 2。*
 
 ### 3.2 ODE-to-SDE：保持边际，改变路径
 
-Flow-GRPO 使用反向时间 $t=1\to0$：$t=1$ 是 Gaussian noise，$t=0$ 是图像 latent。按论文记号，概率流 ODE 为
+第一篇 10.4 节的式 (10.5) 汇总了同一条边际路径对应的三种动力学：
+
+$$
+\boxed{
+\begin{aligned}
+\text{概率流 ODE：}\quad
+&\dot X_t=b(t,X_t),
+\\
+\text{前向 SDE：}\quad
+&\mathrm dZ_t=(b+\epsilon s)\,\mathrm dt
++\sqrt{2\epsilon}\,\mathrm dW_t,
+\\
+\text{反向 SDE：}\quad
+&\mathrm dZ_t=(b-\epsilon s)\,\mathrm dt
++\sqrt{2\epsilon}\,\mathrm d\overline W_t,
+\qquad t:1\to0.
+\end{aligned}
+}
+$$
+
+Flow-GRPO 使用同样的反向时间 $t=1\to0$：$t=1$ 是 Gaussian noise，$t=0$ 是图像 latent。在第一篇式 (10.5) 中令
+
+$$
+b=v_\theta,
+\qquad
+s=\nabla_x\log p_t,
+\qquad
+\epsilon(t)=\frac{\sigma_t^2}{2},
+$$
+
+概率流 ODE 即为
 
 $$
 \mathrm dX_t=v_\theta(X_t,t,c)\,\mathrm dt,
 \tag{3.1}
 $$
 
-与其同边际的反向 SDE 写成
+反向 SDE 即为
 
 $$
 \mathrm dX_t
@@ -283,7 +284,27 @@ v_\theta(X_t,t,c)
 \tag{3.2}
 $$
 
-对 Rectified Flow，把 score 用 velocity 消去后得到论文实际使用的漂移：
+这里 $\sigma_t$ 是 SDE 的布朗噪声幅度；式 (3.2) 沿用论文的 $\mathrm dW_t$ 记号，对应第一篇的反向布朗增量 $\mathrm d\overline W_t$。
+
+对 Rectified Flow，从式 (3.2) 到式 (3.3) 还要用到第一篇式 (16.4) 的 score--velocity 转换。Flow-GRPO 的反向线性路径可写成
+
+$$
+X_t=(1-t)X_0+t\varepsilon,
+\qquad X_0\sim p_{\mathrm{data}},
+\quad \varepsilon\sim\mathcal N(0,I).
+$$
+
+这对应第一篇式 (15.1) 中的 $a(t)=1-t$ 和路径噪声系数 $\sigma_{\mathrm{path}}(t)=t$。再由第一篇式 (16.4) 得
+
+$$
+\nabla_x\log p_t(x\mid c)
+=-\frac{1}{t}
+\bigl(x+(1-t)v_\theta(x,t,c)\bigr).
+$$
+
+> **记号区分。** $\sigma_{\mathrm{path}}(t)=t$ 是线性概率路径中原始高斯噪声的系数；式 (3.2) 中的 $\sigma_t$ 则是后来构造的 SDE 布朗噪声幅度。两者作用不同，不能混为同一个量。
+
+将这个 score--velocity 关系代入式 (3.2)，即得论文实际使用的 velocity 漂移：
 
 $$
 \boxed{
@@ -339,7 +360,7 @@ $$
 \tag{3.7}
 $$
 
-固定旧参数 $\theta_{\mathrm{old}}$ 时，理想连续时间 SDE 与原 ODE 共享每个时刻的边际。因此随机化的目的不是故意改变当前生成分布，而是为训练增加：
+固定旧参数 $\theta_{\mathrm{old}}$，并且式 (3.2) 中使用的 score 确实对应这组参数诱导的 ODE 边际时，理想连续时间 SDE 与原 ODE 共享每个时刻的边际。因此随机化的目的不是故意改变当前生成分布，而是为训练增加：
 
 - 给定当前 latent 后的随机分支；
 - Gaussian 条件转移概率；
@@ -356,7 +377,7 @@ D_{\mathrm{KL}}(\pi_\theta\|\pi_{\mathrm{ref}})
 \tag{3.8}
 $$
 
-所以 velocity 的差异最终被转化成一个可微、闭式的局部 trust-region 惩罚。式 (3.2) 与式 (1.3) 表面的正负号不同，只是生成时间方向不同。
+所以 velocity 的差异最终被转化成一个可微、闭式的局部 trust-region 惩罚。反向 SDE 与正向 SDE 的 score 漂移正负号不同，原因就是运行方向不同。
 
 ### 3.3 Group rollout 与 GRPO 目标
 
@@ -422,25 +443,36 @@ Flow-GRPO 的第二项贡献不是 SDE 理论，而是数据采集策略。论�
 
 论文在 SD3.5-M 上报告：GenEval 从 63% 提升到 95%，视觉文字渲染准确率从 59% 提升到 92%，并在 PickScore 人类偏好任务上提升奖励；配合 KL 约束时，作者报告图像质量与多样性没有明显恶化。
 
-Flow-GRPO 的限制也来自它的接口选择：
+![Flow-GRPO 在 GenEval 上的定性结果](images/paper-hires/flow-grpo-geneval-results.png)
 
-- 连续时间同边际不等于 5、10 步 Euler SDE 仍精确同边际；
-- velocity-to-score 的近似误差会进入 SDE 漂移；
-- 终点奖励被广播到所有去噪步，credit assignment 较粗；
-- 内部 horizon 随去噪步数增长；
-- 噪声太小缺乏探索，太大又会把 latent 推向模型不熟悉的区域。
+*图 3-2：GenEval 定性对比。SD3.5-M 经 Flow-GRPO 训练后，在物体计数、颜色、属性绑定和空间关系上更准确；图源为该论文 Figure 3。*
 
-因此 Flow-GRPO 证明的是“同边际 SDE 可以成为有效的逐步 GRPO 接口”，而不是“任意有限步 SDE sampler 都与原 ODE 等价”。
+Flow-GRPO 仍有三个主要限制：
+
+- 10 步 SDE 是对连续过程的粗略离散，不保证严格保持原 ODE 边际；
+- 同一个终点奖励分给所有去噪步，无法准确判断哪一步起了作用；
+- 噪声太小时探索不足，太大时又会破坏生成质量。
+
+因此，少步 SDE 的实际效果仍需要通过实验验证。
 
 ---
 
 ## 4. ReinFlow：直接把离散 flow 变成可学习的 Markov 策略
 
-### 4.1 论文与 Flow-GRPO 的区别
+### 4.1 从确定性 flow 到随机 Markov 策略
 
-[Tonghe Zhang 等，*ReinFlow: Fine-tuning Flow Matching Policy with Online Reinforcement Learning*，2025](https://arxiv.org/abs/2505.22094)面向连续机器人控制。它与 Flow-GRPO 共享一个判断：确定性内部转移不适合直接做 policy gradient。但 ReinFlow 不追求“连续时间与原 ODE 严格同边际”，而是直接为离散 flow 注入可学习噪声。
+[Tonghe Zhang 等，*ReinFlow: Fine-tuning Flow Matching Policy with Online Reinforcement Learning*，2025](https://arxiv.org/abs/2505.22094)研究如何用在线强化学习微调机器人 flow policy。
 
-给定环境观测 $o_h$，第 $k$ 个内部步写成
+在环境时刻 $h$，策略先接收观测 $o_h$，再从初始噪声 $A_h^0\sim p_0$ 出发，经过 $K$ 个内部去噪步得到 $A_h^K$。机器人真正执行的是最终动作 $A_h^K$，中间的 $A_h^1,\ldots,A_h^{K-1}$ 都是内部 latent。
+
+原来的 Euler 更新是确定性的：
+
+$$
+A_h^{k+1}
+=A_h^k+\Delta t_kv_\theta(t_k,A_h^k,o_h).
+$$
+
+给定 $A_h^k$ 和 $o_h$ 后，下一步 $A_h^{k+1}$ 便完全确定，对应的是 Dirac 转移，无法直接得到 PPO 所需的普通概率密度和似然比。ReinFlow 因此不从连续时间 SDE 出发，而是直接在每个离散更新中加入可学习的高斯噪声：
 
 $$
 A_h^{k+1}
@@ -452,7 +484,9 @@ A_h^{k+1}
 \tag{4.1}
 $$
 
-于是
+其中，$\theta$ 是 velocity 网络的参数，$\theta'$ 是噪声网络的参数；$\sigma_{\theta'}$ 根据当前 latent、时间和观测决定这一步的探索强度。
+
+给定 $A_h^k$ 和 $o_h$，式 (4.1) 的均值是确定性 Euler 更新，方差由噪声网络给出。因此，这一步的条件分布为
 
 $$
 \pi_{\theta,\theta'}(A_h^{k+1}\mid A_h^k,o_h)
@@ -464,7 +498,22 @@ A_h^k+\Delta t_kv_\theta,
 \tag{4.2}
 $$
 
-完整内部路径的联合 log probability 精确分解为
+现在每个内部步都有可计算的高斯密度，整条去噪路径也就构成了一个 Markov 策略。固定环境时刻 $h$，其内部路径为
+
+$$
+A_h^0\rightarrow A_h^1\rightarrow\cdots\rightarrow A_h^K.
+$$
+
+式 (4.3) 来自概率的链式法则和 Markov 假设。由于下一步 $A_h^{k+1}$ 只依赖当前状态 $A_h^k$ 和观测 $o_h$，整条路径的联合概率为
+
+$$
+\pi_{\theta,\theta'}(A_h^{0:K}\mid o_h)
+=p_0(A_h^0)
+\prod_{k=0}^{K-1}
+\pi_{\theta,\theta'}(A_h^{k+1}\mid A_h^k,o_h).
+$$
+
+其中每个一步转移概率都是式 (4.2) 的高斯密度。对上式取对数，乘积变成求和：
 
 $$
 \log\pi_{\theta,\theta'}(A_h^{0:K}\mid o_h)
@@ -474,11 +523,11 @@ $$
 \tag{4.3}
 $$
 
-这里的“精确”是相对于**论文定义的离散 Gaussian Markov 策略**而言，不是说它精确保持原连续 ODE 的所有边际。
+这里分解的是**论文定义的离散 Gaussian Markov 策略**的路径概率，并不表示它保持了原连续 ODE 的所有边际。
 
-### 4.2 为什么路径概率可以更新最终机器人动作
+### 4.2 路径概率对最终机器人动作的更新
 
-机器人最终执行的是 $A_h^K$，而式 (4.3) 是含全部 latent 的联合概率。ReinFlow 给出 Markov-process policy gradient：对内部路径求 log probability 梯度，并乘以最终动作的 advantage，仍可得到外层策略目标的无偏 policy-gradient 表达。
+机器人最终执行的是 $A_h^K$，而式 (4.3) 是含全部 latent 的联合概率。把内部路径视为策略的辅助随机变量，在路径确实由这些 Markov 转移采样、奖励只通过最终动作与环境轨迹产生等通常条件下，对联合路径的 log probability 求梯度并乘以最终动作的 advantage，可以得到外层期望回报的 policy-gradient 表达。
 
 其核心结构可概括为
 
@@ -508,6 +557,8 @@ $$
 \tag{4.5}
 $$
 
+初始噪声分布 $p_0(A_h^0)$ 不随参数变化，因此会在新旧路径概率的比值中抵消。真正参与式 (4.5) 的是后续 $K$ 个 Gaussian 转移。
+
 然后使用标准 PPO surrogate：
 
 $$
@@ -527,17 +578,17 @@ $\mathcal R_h$ 可以是 entropy、KL 或对噪声大小的正则。velocity 网
 
 一轮 ReinFlow 的计算顺序是：用旧参数与噪声网络在环境中 rollout，保存所有内部 latent；用 GAE 或 critic 计算最终动作 advantage；再用保存的内部路径重算式 (4.3) 和式 (4.5)，进行多轮 PPO 更新。这里没有把每个内部 latent 当成真正的环境动作，环境只看到 $A_h^K$。
 
-### 4.3 为什么 ReinFlow 特别适合少步机器人策略
+### 4.3 ReinFlow 适合少步机器人策略的原因
 
 ReinFlow 直接定义有限步转移，不依赖连续时间 SDE 再做粗离散，因此即便只有 1 或 4 个去噪步，式 (4.2) 的策略密度仍是定义上精确的。这使它能同时微调 Rectified Flow 和 Shortcut Model。
 
 论文报告，在腿式运动任务中，Rectified Flow policy 的 episode reward 平均净增长 135.36%，相较 DPPO 节省 82.63% wall time；在状态和视觉操作任务中，Shortcut Model policy 的成功率平均净增长 40.34%，并能在 4 步甚至 1 步下训练。
 
-代价是随机化后的训练策略不再自动继承原 ODE 的连续时间边际保证；性能依赖噪声网络、正则化和离散步数。换句话说，ReinFlow 用“有限步策略定义清楚”换取了“连续同边际解释较弱”。
+代价是随机化后的训练策略不再自动继承原 ODE 的连续时间边际保证；性能依赖噪声网络、正则化和离散步数，而且多个内部 log ratio 相加后，方差通常会随路径变长而增大。训练结束时丢弃噪声网络也会引入训练策略与部署策略的差异。换句话说，ReinFlow 用“有限步策略定义清楚”换取了“连续同边际解释较弱”。
 
 ---
 
-## 5. πRL：在 VLA 中比较 Flow-Noise 与 Flow-SDE
+## 5. $\pi_{\mathrm{RL}}$：在 VLA 中比较 Flow-Noise 与 Flow-SDE
 
 ### 5.1 论文定位
 
@@ -546,95 +597,78 @@ ReinFlow 直接定义有限步转移，不依赖连续时间 SDE 再做粗离散
 - **Flow-Noise** 继承 ReinFlow 思路，直接构造离散、可学习噪声的内部 Markov 过程；
 - **Flow-SDE** 继承 Flow-GRPO 思路，用 ODE-to-SDE 保持理想连续时间边际，并把内部去噪与外部环境组成两层 MDP。
 
-这篇论文的重要性不只是“又做了一次 PPO”，而是清楚展示了图像生成中单条内部 MDP，如何扩展为机器人控制中的两种时间尺度。
+这篇论文的重要性不只是“又做了一次 PPO”，还在于它把图像生成中的单条内部 MDP 扩展为机器人控制中的两种时间尺度。
 
-![piRL 中的 Flow-Noise 与 Flow-SDE 噪声注入](https://arxiv.org/html/2510.25889/x2.png)
+![piRL 中的 Flow-Noise 与 Flow-SDE 噪声注入](images/paper-hires/pirl-noise-injection.png)
 
 *图 5-1：$\pi_{\mathrm{RL}}$ 的两种噪声注入方式。Flow-Noise 学习离散方差，Flow-SDE 使用由 velocity/score 确定的同边际漂移；图源为该论文 Figure 2。*
 
-### 5.2 Flow-Noise：一层环境 MDP加内部路径似然
+### 5.2 Flow-Noise：与 ReinFlow 相同的路径策略
 
-在一个环境时刻内，用 $\tau_k=k/K$ 表示内部生成时间，$\delta=1/K$。Flow-Noise 定义
+为与第 4 章一致，记 $A_h^0$ 为环境时刻 $h$ 的初始噪声，$A_h^K$ 为最终动作。Flow-Noise 直接在离散 Euler 更新中加入可学习噪声，其一步转移写成
 
 $$
-\begin{aligned}
-\mu_{h,k}
-&=A_h^{\tau_k}
-+\delta\,v_\theta(A_h^{\tau_k},\tau_k,o_h),\\
-\Sigma_{h,k}
-&=\operatorname{diag}
-\left(
-\sigma_{\theta'}^2(A_h^{\tau_k},\tau_k,o_h)
-\right),\\
-A_h^{\tau_{k+1}}
-&\sim\mathcal N(\mu_{h,k},\Sigma_{h,k}).
-\end{aligned}
+\pi_{\theta,\theta'}(A_h^{k+1}\mid A_h^k,o_h)
+=\mathcal N\!\left(
+A_h^k+\Delta t_kv_\theta(t_k,A_h^k,o_h),
+\sigma_{\theta'}^2(t_k,A_h^k,o_h)I
+\right).
 \tag{5.1}
 $$
 
-噪声网络输出逐维标准差，并与 velocity 网络联合训练。整个动作生成路径 $\mathcal A_h=(A_h^{\tau_0},\ldots,A_h^{\tau_K})$ 的 log likelihood 为
+这与 ReinFlow 的式 (4.2) 是同一种构造：$\theta$ 控制 velocity，$\theta'$ 控制探索噪声。为简化记号，式 (5.1) 写成 $\sigma_{\theta'}^2I$；实际逐维输出噪声时，各动作维度使用各自的方差。
+
+由式 (4.3)，整条内部路径的 log probability 为
 
 $$
-\log\pi_{\theta,\theta'}(\mathcal A_h\mid o_h)
-=\log p_0(A_h^{\tau_0})
+\log\pi_{\theta,\theta'}(A_h^{0:K}\mid o_h)
+=\log p_0(A_h^0)
 +\sum_{k=0}^{K-1}
-\log\mathcal N
-\left(
-A_h^{\tau_{k+1}};\mu_{h,k},\Sigma_{h,k}
-\right).
+\log\pi_{\theta,\theta'}(A_h^{k+1}\mid A_h^k,o_h).
 \tag{5.2}
 $$
 
-外层 PPO 仍把环境时刻 $h$ 当作一个 step，但策略 ratio 使用式 (5.2) 的整条内部路径 likelihood。它的 horizon 不显式扩张为 $HK$，不过每次重算 likelihood 仍需重放完整去噪轨迹。
+外层 PPO 仍把环境时刻 $h$ 当作一个 step，并用式 (5.2) 计算整条内部路径的 ratio。因此，Flow-Noise 不把 horizon 显式扩张为 $HK$，但更新时仍要重算所有内部步的 log probability。它与 ReinFlow 一样，直接定义有限步随机策略，不要求保持原 ODE 的连续时间边际。
 
-它和 ReinFlow 一样，得到的是论文所定义离散策略的精确 log probability；是否保持原 ODE 边际不是该分支的目标。
+### 5.3 Flow-SDE：把每个内部步作为 PPO step
 
-### 5.3 Flow-SDE：显式两层 MDP
+Flow-SDE 不训练独立的噪声网络，而是复用第 3 章的 ODE-to-SDE 构造。为统一记号，本节仍令 $t=1$ 表示噪声、$t=0$ 表示动作，并记 $\Delta t_k=t_{k+1}-t_k<0$。原论文若使用相反的时间坐标，只需同时变换时间、velocity 和噪声日程，算法含义不变。
 
-Flow-SDE 不学习独立方差网络，而是沿用 Flow-GRPO 的同边际构造。按论文的 $\tau=0$ 噪声、$\tau=1$ 动作方向，SDE 为
+把式 (3.3) 方括号内的 SDE 漂移简记为 $b_\theta^{\mathrm{SDE}}$，则 Euler--Maruyama 更新为
 
 $$
-\mathrm dA^\tau
-=\left[
-v_\theta(A^\tau,\tau,o)
-+\frac{\sigma_\tau^2}{2\tau}
-\left(
-A^\tau+(1-\tau)v_\theta(A^\tau,\tau,o)
-\right)
-\right]\mathrm d\tau
-+\sigma_\tau\,\mathrm dW_\tau.
+A_h^{k+1}
+=A_h^k
++b_\theta^{\mathrm{SDE}}(t_k,A_h^k,o_h)\Delta t_k
++\sigma_{t_k}\sqrt{|\Delta t_k|}\,\epsilon_k,
+\qquad
+\epsilon_k\sim\mathcal N(0,I).
 \tag{5.3}
 $$
 
-离散一步仍是 Gaussian：
+因此，每个内部步的策略密度为
 
 $$
-\begin{aligned}
-\mu_\tau
-&=A^\tau
-+\delta\left[
-v_\theta
-+\frac{\sigma_\tau^2}{2\tau}
-\bigl(A^\tau+(1-\tau)v_\theta\bigr)
-\right],\\
-\Sigma_\tau
-&=\sigma_\tau^2\delta I,
-\qquad
-A^{\tau+\delta}\sim\mathcal N(\mu_\tau,\Sigma_\tau).
-\end{aligned}
+\pi_\theta(A_h^{k+1}\mid A_h^k,o_h)
+=\mathcal N\!\left(
+A_h^k+b_\theta^{\mathrm{SDE}}\Delta t_k,
+\sigma_{t_k}^2|\Delta t_k|I
+\right).
 \tag{5.4}
 $$
 
-Flow-SDE 将内部状态写成
+式 (5.3)--(5.4) 就是把第 3 章的式 (3.5)--(3.6) 从图像 latent 换成机器人动作 latent。两者的关键区别在于：Flow-Noise 的噪声由 $\theta'$ 学习，Flow-SDE 的漂移和噪声日程则来自同边际 SDE。
+
+Flow-SDE 把每个内部转移都看成两层 MDP 中的一个策略 step：
 
 $$
-\bar s_h^k=(o_h,A_h^k),
+s_{h,k}=(o_h,A_h^k),
 \qquad
-\bar a_h^k=A_h^{k+1}.
+a_{h,k}=A_h^{k+1}.
 \tag{5.5}
 $$
 
-当 $k<K$ 时，观测 $o_h$ 不变，只推进内部 latent；当 $k=K$ 时，最终动作块 $A_h^K$ 进入环境，得到奖励并转移到 $o_{h+1}$。内部步奖励为零，外层交互后才获得环境奖励。
+在 $k=0,\ldots,K-1$ 的内部去噪过程中，环境观测 $o_h$ 保持不变，内部奖励为零；得到 $A_h^K$ 后，机器人执行这个动作，环境才返回奖励并转移到 $o_{h+1}$。
 
 ```mermaid
 flowchart LR
@@ -648,199 +682,69 @@ flowchart LR
     O1 --> N1["重新采样内部噪声"]
 ```
 
-这样，最终动作难算的 marginal likelihood 被替换为每个 Gaussian 内部转移的 likelihood。代价是有效 horizon 从 $H$ 扩张到约 $HK$，critic 和 credit assignment 都更难。
+这样，难以直接计算的最终动作边际概率被替换为每个内部高斯转移的概率。代价是有效 horizon 从 $H$ 扩张到约 $HK$，critic 和 credit assignment 都更难。
 
-两种分支最后都进入 PPO，但 ratio 的粒度不同：
-
-$$
-\rho_h^{\mathrm{Flow\text{-}Noise}}
-=\frac{
-\pi_{\theta_{\mathrm{new}},\theta'_{\mathrm{new}}}
-(\mathcal A_h\mid o_h)
-}{
-\pi_{\theta_{\mathrm{old}},\theta'_{\mathrm{old}}}
-(\mathcal A_h\mid o_h)
-},
-\qquad
-\rho_{h,k}^{\mathrm{Flow\text{-}SDE}}
-=\frac{
-\pi_{\theta_{\mathrm{new}}}(A_h^{k+1}\mid A_h^k,o_h)
-}{
-\pi_{\theta_{\mathrm{old}}}(A_h^{k+1}\mid A_h^k,o_h)
-}.
-\tag{5.6}
-$$
-
-Flow-Noise 用环境 step 的 advantage 乘整条内部路径比值；标准 Flow-SDE 则把同一个外层 advantage 传播到相应内部随机步。
-
-### 5.4 Hybrid ODE--SDE：只随机化一个内部位置
-
-为缩短 horizon，$\pi_{\mathrm{RL}}$ 还提出 hybrid rollout：每个环境时刻随机选择一个去噪位置 $\tau_h$ 做 SDE 策略动作，其余位置用确定性 ODE 完成。若 $\Phi^{\mathrm{ODE}}_{a\to b}$ 表示从 $a$ 积分到 $b$ 的 ODE flow map，则一次环境动作可以写成
+两种分支最后都使用 PPO，区别只在 ratio 的计算粒度：
 
 $$
 \begin{aligned}
-A_h^{\tau_h}
-&=\Phi^{\mathrm{ODE}}_{0\to\tau_h}(A_h^0),\\
-A_h^{\tau_h+\delta}
-&\sim\pi_\theta(\cdot\mid A_h^{\tau_h},o_h),\\
-A_h^1
-&=\Phi^{\mathrm{ODE}}_{\tau_h+\delta\to1}
-(A_h^{\tau_h+\delta}).
+\rho_h^{\mathrm{Noise}}
+&=\exp\!\left[
+\sum_{k=0}^{K-1}
+\left(
+\log\pi_{\theta,\theta'}(A_h^{k+1}\mid A_h^k,o_h)
+-\log\pi_{\mathrm{old}}(A_h^{k+1}\mid A_h^k,o_h)
+\right)
+\right],\\
+\rho_{h,k}^{\mathrm{SDE}}
+&=\frac{
+\pi_\theta(A_h^{k+1}\mid A_h^k,o_h)
+}{
+\pi_{\mathrm{old}}(A_h^{k+1}\mid A_h^k,o_h)
+}.
 \end{aligned}
+\tag{5.6}
+$$
+
+Flow-Noise 用一个环境 advantage 乘整条路径的 ratio；Flow-SDE 则在每个内部随机步计算 ratio，并把相应的外层 advantage 用于这些内部步。
+
+### 5.4 Hybrid ODE--SDE：只随机化一个内部位置
+
+为缩短 horizon，$\pi_{\mathrm{RL}}$ 还提出 hybrid rollout：在每个环境时刻随机选择一个内部位置 $j_h$ 使用 SDE，其余位置仍使用确定性 ODE。整个更新可以简单写成
+
+$$
+A_h^{k+1}
+\mathrel{=}
+\begin{cases}
+A_h^k+v_\theta(t_k,A_h^k,o_h)\Delta t_k,
+&k\ne j_h,\\[4pt]
+A_h^k+b_\theta^{\mathrm{SDE}}(t_k,A_h^k,o_h)\Delta t_k
++\sigma_{t_k}\sqrt{|\Delta t_k|}\,\epsilon_k,
+&k=j_h.
+\end{cases}
 \tag{5.7}
 $$
 
-PPO ratio 只来自中间那一个 Gaussian 决策。这样保留一个可计算的随机策略动作，同时避免把所有内部步都暴露给外层 PPO。论文报告 hybrid 两层形式相对标准两层形式约有两倍加速。
+PPO ratio 只来自 $k=j_h$ 的那一次高斯决策。这样既保留了可计算的随机策略密度，又不必把所有内部步都暴露给外层 PPO。论文报告 hybrid 两层形式相对标准两层形式约有两倍加速。
 
 实验中，论文在 LIBERO、ManiSkill、MetaWorld 和 CALVIN 上微调 $\pi_0$ 与 $\pi_{0.5}$。例如 few-shot $\pi_0$ 的平均成功率从 51.1 提升到 Flow-SDE 的 78.7 和 Flow-Noise 的 80.3；few-shot $\pi_{0.5}$ 从 55.6 提升到 86.6 和 84.7。论文也报告长程和 OOD 设置上的改善。
 
 这些结果同时提醒我们：训练时噪声增大会降低随机 rollout 的即时成功率，但部署时可以使用更新后的确定性 ODE。评估必须分别报告 stochastic train policy 与 deterministic evaluation policy。
 
-### 5.5 三个逐步 likelihood 方法的对照
+### 5.5 四种逐步 likelihood 实现的对照
 
 | 方法与论文 | 随机化方式 | 优化单位 | 连续时间同边际 | 主要适用场景 |
 |---|---|---|---:|---|
 | Flow-GRPO | score 补偿的 SDE | 每个去噪步的 GRPO ratio | 理想条件下是 | 图像生成、终点奖励 |
 | ReinFlow | 可学习离散 Gaussian 噪声 | 内部路径联合 likelihood 的 PPO | 不要求 | 少步机器人 flow policy |
 | $\pi_{\mathrm{RL}}$/Flow-Noise | 可学习离散噪声 | 外层环境 step + 内部联合 likelihood | 不要求 | 大型 flow-based VLA |
-| $\pi_{\mathrm{RL}}$/Flow-SDE | 同边际 SDE | 内外两层 MDP | 理想条件下是 | 需要显式探索结构的 VLA |
+| $\pi_{\mathrm{RL}}$/Flow-SDE | score 补偿的 SDE | 内外两层 MDP | 方向、score 与步长一致时是 | 需要显式探索结构的 VLA |
 
 ---
 
-## 6. 从“连续时间正确”到“有限步可用”：CPS 与 PRECISE
+## 6. 不做 ODE-to-SDE 的奖励优化路线
 
-ODE-to-SDE 在 Fokker--Planck 层面成立，并不代表 Euler--Maruyama 用 5 或 10 步就能忠实保持边际。后续论文因此把重点从“是否应该加噪声”推进到“怎样离散随机过程”。
-
-> **时间方向。** 为与 CPS 和 PRECISE 原论文的公式一致，本节暂时使用 $t=1$ 为噪声、$t=0$ 为数据，并沿 $t' < t$ 的方向去噪。这只是式 (1.1) 时间方向的反转。
-
-### 6.1 CPS：保持插值系数
-
-[Feng Wang、Zihao Yu，*Coefficients-Preserving Sampling for Reinforcement Learning with Flow Matching*，2025](https://arxiv.org/abs/2509.05952)指出，Flow-GRPO 的 Euler SDE 在有限步下可能出现总噪声系数大于 scheduler 目标的问题。CPS 借鉴 DDIM，把下一状态写成预测 clean latent、预测 noise 和新噪声的组合，并约束噪声系数的平方和匹配目标时间：
-
-$$
-Z_{t'}^{\mathrm{CPS}}
-=(1-t')\widehat Z_0(t)
-+k_1\widehat\epsilon(t)
-+k_2 w,
-\qquad
-k_1^2+k_2^2=t'^2.
-\tag{6.1}
-$$
-
-它避免 Euler 直接叠加过量噪声，并仍给出 Gaussian 随机转移。但“系数正确”只是必要条件，不足以保证一般数据分布下的完整边际正确。
-
-### 6.2 PRECISE：冻结 posterior mean 后求局部 SDE 闭式解
-
-[Jade Zou 等，*PRECISE: SDE-Consistent Stochastic Sampling for RL Post-Training of Flow-Matching Models*，2026](https://arxiv.org/abs/2605.23522)进一步分析：
-
-- Euler 在一步内冻结 velocity 和 score，无法响应刚注入的新噪声，因而会产生 excess discretization noise；
-- CPS 使用 posterior mean 代替仍有不确定性的 clean latent，可能收缩残余协方差，造成 marginal bias。
-
-PRECISE 的做法是：在单个有限步内近似冻结 clean-latent posterior mean $\widehat Z_0(t)$，但保留 SDE 规定的残余随机方差。对 $t'<t$，其转移写成
-
-$$
-\boxed{
-Z_{t'}
-=(1-t')\widehat Z_0(t)
-+t'\rho(t',t)\widehat\epsilon(t)
-+t'\sqrt{1-\rho(t',t)^2}\,w,
-}
-\tag{6.2}
-$$
-
-其中 $w\sim\mathcal N(0,I)$，$\rho(t',t)$ 由探索噪声日程的积分确定。该式是在“单步内 posterior mean 近似不变”的假设下，对局部线性 SDE 的闭式 Gaussian 转移。
-
-对论文使用的探索日程 $\varepsilon_t=\eta\sqrt{t/(1-t)}$，相关系数具有显式形式
-
-$$
-\rho(t',t)
-=\left[
-\frac{t'(1-t)}{t(1-t')}
-\right]^{\eta^2/2}.
-\tag{6.3}
-$$
-
-$\eta=0$ 时 $\rho=1$，式 (6.2) 退化为确定性更新；$\eta$ 增大时，旧 noise prediction 的占比下降，新随机噪声的占比上升。PRECISE 因而不是额外训练一个网络，而是替换 Flow-GRPO rollout 中的有限步 transition rule；式 (6.2) 本身仍是可计算 likelihood 的 Gaussian 策略。
-
-因此这三者的关系不是简单的版本替换：
-
-| Sampler | 局部假设 | 优点 | 主要风险 |
-|---|---|---|---|
-| Euler SDE | 步首冻结 drift/score | 简单，直接对应 SDE | 少步时注入过量离散噪声 |
-| CPS | 强制插值系数匹配 | 控制总噪声水平 | posterior mean 可能丢失残余不确定性 |
-| PRECISE | 单步冻结 clean posterior mean | 保留 SDE 残余方差并有闭式转移 | 依赖局部稳定近似 |
-
-这组工作给 Flow Matching RL 一个重要结论：**sampler 是策略定义的一部分，不是可以随意替换的数值细节。**
-
-### 6.3 GLASS Flows 的边界意义
-
-[Peter Holderrieth 等，*GLASS Flows: Transition Sampling for Alignment of Flow and Diffusion Models*，2025/ICLR 2026](https://arxiv.org/abs/2509.25170)不是在线 RL 微调算法，而是推理时 transition sampler。它从预训练模型构造一个“内层 flow”，用随机初值加确定性 ODE 来采样 $p_{t'|t}(x_{t'}\mid x_t)$，服务于 SMC、树搜索和 Feynman--Kac steering。
-
-![GLASS Flows 论文总体框架](https://arxiv.org/html/2509.25170/x1.png)
-
-*图 6-1：GLASS 用随机内层初值和确定性内层 ODE 采样条件转移；图源为该论文 Figure 1。*
-
-具体地，若预训练 Gaussian probability path 为
-
-$$
-X_t\mid z\sim\mathcal N(\alpha_tz,\sigma_t^2I),
-\tag{6.4}
-$$
-
-GLASS 用相关系数 $\rho$ 定义 $(X_t,X_{t'})$ 在给定 $z$ 下的联合 Gaussian：
-
-$$
-\mu=
-\begin{bmatrix}\alpha_t\\\alpha_{t'}\end{bmatrix},
-\qquad
-\Sigma=
-\begin{bmatrix}
-\sigma_t^2 & \rho\sigma_t\sigma_{t'}\\
-\rho\sigma_t\sigma_{t'} & \sigma_{t'}^2
-\end{bmatrix}.
-\tag{6.5}
-$$
-
-这个联合分布定义目标 transition
-
-$$
-p_{t'|t}(x_{t'}\mid x_t)
-=\frac{p_{t,t'}(x_t,x_{t'})}{p_t(x_t)}.
-\tag{6.6}
-$$
-
-关键是把两个相关 Gaussian measurement 压缩成关于 clean latent $z$ 的充分统计量
-
-$$
-S(x_t,x_{t'})
-=\frac{
-\mu^\top\Sigma^{-1}
-\begin{bmatrix}x_t\\x_{t'}\end{bmatrix}
-}{
-\mu^\top\Sigma^{-1}\mu
-}.
-\tag{6.7}
-$$
-
-令 $g(t)=\sigma_t^2/\alpha_t^2$，并选择等效时间
-
-$$
-t^*=g^{-1}\!\left((\mu^\top\Sigma^{-1}\mu)^{-1}\right),
-\qquad
-D_{\mu,\Sigma}(x_t,x_{t'})
-=D_{t^*}\!\left(\alpha_{t^*}S(x_t,x_{t'})\right).
-\tag{6.8}
-$$
-
-式 (6.8) 表示 GLASS 的双观测 denoiser 可以直接通过预训练单观测 denoiser $D_t$ 重参数化得到，无需再训练。再把 $D_{\mu,\Sigma}$ 转换成内层 velocity $u_s(\bar x_s\mid x_t,t)$，从随机 $\bar X_0$ 积分确定性 ODE 到 $s=1$，就得到 $X_{t'}$ 的随机样本。随机性来自内层初值，而不是沿积分路径持续注入 Brownian noise。
-
-它的边界意义是：RL 或搜索真正需要的通常是**随机 Markov 转移**，而不是某种特定数值形式的 SDE。只要能正确、有效地采样条件转移，内层 ODE 同样可能提供随机分支。不过 GLASS 不直接解决训练中新旧策略 likelihood ratio，因此不能把它当作 Flow-GRPO 的即插即用替代。
-
----
-
-## 7. 不做 ODE-to-SDE 的奖励优化路线
-
-### 7.1 奖励加权 Flow Matching：直接改变回归数据分布
+### 6.1 奖励加权 Flow Matching：直接改变回归数据分布
 
 [Jiajun Fan 等，*Online Reward-Weighted Fine-Tuning of Flow Matching with Wasserstein Regularization*，2025](https://arxiv.org/abs/2502.06061)不计算逐步策略 likelihood，而是从当前模型在线采样终点，用奖励构造权重，再训练加权 conditional Flow Matching：
 
@@ -851,17 +755,17 @@ $$
 w(x_1,c)
 \|u_\theta(t,x_t,c)-Y_t\|^2
 \right].
-\tag{7.1}
+\tag{6.1}
 $$
 
 论文使用指数权重
 
 $$
 w(x_1,c)=\exp\bigl(\tau R(x_1,c)\bigr).
-\tag{7.2}
+\tag{6.2}
 $$
 
-所以一次理想加权更新得到 $q_{\mathrm{new}}(x_1)\propto w(x_1)q(x_1)$，与式 (1.8) 的奖励倾斜方向一致。但在线重复 $N$ 轮后会出现 $w(x_1)^N$；没有约束时，分布会趋向 $\arg\max R$ 附近的 Dirac 测度。
+所以一次理想加权更新得到 $q_{\mathrm{new}}(x_1)\propto w(x_1)q(x_1)$，与式 (1.2) 的奖励倾斜方向一致。但在线重复 $N$ 轮后会出现 $w(x_1)^N$；没有约束时，分布会趋向 $\arg\max R$ 附近的 Dirac 测度。
 
 ORW-CFM-W2 因而使用 velocity 差构造终点 Wasserstein-2 距离的可计算上界：
 
@@ -874,7 +778,7 @@ e^{2L}
 \left[
 \|v_\theta(t,x)-v_{\mathrm{ref}}(t,x)\|^2
 \right]\mathrm dt,
-\tag{7.3}
+\tag{6.3}
 $$
 
 其中 $L$ 是参考 velocity 的 Lipschitz 常数。去掉与优化无关的常数后，论文的实际目标可概括为
@@ -888,7 +792,7 @@ w(x_1,c)\|v_\theta-u(\cdot\mid x_1,c)\|^2
 +\alpha\|v_\theta-v_{\mathrm{ref}}\|^2
 \right].
 }
-\tag{7.4}
+\tag{6.4}
 $$
 
 在论文的理想分析中，第 $N$ 轮后的分布满足
@@ -901,10 +805,10 @@ q(x_1)
 \tau N R(x_1)
 -\beta\sum_{n=1}^N D^{n-1}(x_1)
 \right],
-\tag{7.5}
+\tag{6.5}
 $$
 
-其中 $D^{n-1}(x_1)$ 是第 $n-1$ 轮 velocity 与参考 velocity 的条件平方差。第一项把质量推向高奖励区域，第二项惩罚偏离参考 flow；$\tau$ 和 $\alpha$ 分别控制 reward greediness 与 diversity preservation。
+其中 $D^{n-1}(x_1)$ 是第 $n-1$ 轮 velocity 与参考 velocity 的条件平方差。第一项把质量推向高奖励区域，第二项惩罚偏离参考 flow；$\tau$ 控制 reward greediness，式中的 $\beta$ 则概括由 Wasserstein 正则强度带来的 diversity-preservation 系数。
 
 这一路线的优势是完全复用预训练式回归，不需要路径 likelihood；缺点是它更接近 reward-weighted regression 或 cross-entropy method，缺少 PPO 那样明确的新旧策略 trust region，权重退化时容易被少数高奖励样本主导。
 
@@ -919,7 +823,7 @@ $$
 a_i
 =\frac{r_i-\operatorname{mean}(r_1,\ldots,r_G)}
 {\operatorname{std}(r_1,\ldots,r_G)+\varepsilon}.
-\tag{7.6}
+\tag{6.6}
 $$
 
 这里没有 PPO ratio；优势先指数化为正权重，再乘在 Flow Matching regression 上：
@@ -935,7 +839,7 @@ v_\theta((A_i')^\tau,\tilde o,\tau)
 -u((A_i')^\tau\mid A_i')
 \right\|^2
 \right].
-\tag{7.7}
+\tag{6.7}
 $$
 
 $A_i'$ 是 action-trajectory explorer 对 $A_i$ 加入平滑 bump 后的候选轨迹。reward surrogate 通过真实 rollout 数据回归：
@@ -946,74 +850,12 @@ $$
 \left[
 \|R_\phi(\tilde o,A)-R(\tilde o,A,O)\|^2
 \right].
-\tag{7.8}
+\tag{6.8}
 $$
 
-训练在“优化 policy”和“收集新 rollout、修正 reward surrogate”之间交替，避免策略长期利用 surrogate 的 OOD 误差。论文还把动作 chunk 的时间长度纳入生成变量，用于 minimum-time control。它说明“GRPO”这个名字不一定意味着必须有逐步 Gaussian likelihood；关键要看优势究竟乘在真实 log probability 上，还是转化为 Flow Matching 的样本权重。
+训练在“优化 policy”和“收集新 rollout、修正 reward surrogate”之间交替，避免策略长期利用 surrogate 的 OOD 误差。论文还把动作 chunk 的时间长度纳入生成变量，用于 minimum-time control。“GRPO”这个名称不一定意味着方法具有逐步 Gaussian likelihood；两类实现的关键区别在于优势作用于真实 log probability，还是被转化为 Flow Matching 的样本权重。
 
-### 7.2 FPO：用 CFM/ELBO 损失差代理策略比值
-
-[David McAllister 等，*Flow Matching Policy Gradients*，2025](https://arxiv.org/abs/2507.21053)提出 Flow Policy Optimization（FPO）。它从加权 denoising/Flow Matching 损失与 ELBO 的关系出发，用损失差构造 PPO 风格比值：
-
-$$
-\boxed{
-\widehat r_\theta^{\mathrm{FPO}}
-=\exp\!\left(
-\widehat{\mathcal L}_{\theta_{\mathrm{old}}}^{\mathrm{FM}}
--\widehat{\mathcal L}_{\theta}^{\mathrm{FM}}
-\right).
-}
-\tag{7.9}
-$$
-
-再将 $\widehat r_\theta^{\mathrm{FPO}}$ 代入 PPO-clip：
-
-$$
-\mathcal J_{\mathrm{FPO}}
-=\mathbb E
-\left[
-\min\!\left(
-\widehat r_\theta^{\mathrm{FPO}}\widehat A,
-\operatorname{clip}(\widehat r_\theta^{\mathrm{FPO}},1-\epsilon,1+\epsilon)\widehat A
-\right)
-\right].
-\tag{7.10}
-$$
-
-FPO 的 rollout 可以使用 ODE、SDE、高阶 solver 或不同采样步数，因为 policy update 不再绑定某个内部 Gaussian 去噪 MDP。它直接在外层环境的 state-action pair 上计算 advantage，避免把 horizon 乘以去噪步数。
-
-实际计算时，对每个环境 action $a_h$ 固定保存 $N_{\mathrm{mc}}$ 组时间—噪声样本 $(\tau_j,\epsilon_j)$，并在所有 PPO epoch 中复用：
-
-$$
-\widehat r_\theta^{\mathrm{FPO}}
-=\exp\!\left[
--\frac1{N_{\mathrm{mc}}}
-\sum_{j=1}^{N_{\mathrm{mc}}}
-\left(
-\ell_\theta(\tau_j,\epsilon_j)
--\ell_{\theta_{\mathrm{old}}}(\tau_j,\epsilon_j)
-\right)
-\right].
-\tag{7.11}
-$$
-
-保存同一组 $(\tau_j,\epsilon_j)$ 很重要，否则新旧损失差会混入额外 Monte Carlo 噪声。代价是式 (7.9) 是 ELBO/CFM 代理比，不是真实终点 likelihood ratio；当 $N_{\mathrm{mc}}=1$ 时，由 Jensen 不等式
-
-$$
-\mathbb E_{\tau,\epsilon}
-\left[
-\exp(\ell_{\mathrm{old}}-\ell_\theta)
-\right]
-\ge
-\exp\!\left(
-\mathbb E[\ell_{\mathrm{old}}-\ell_\theta]
-\right),
-\tag{7.12}
-$$
-
-比值估计存在向上偏差。FPO 的判断是：接受这个可控代理误差，可以换来 sampler 无关和实现简洁。
-
-### 7.3 RAM：用终点奖励修正预训练回归目标
+### 6.2 RAM：用终点奖励修正预训练回归目标
 
 [Andreas Bergmeister 等，*Reinforce Adjoint Matching: Scaling RL Post-Training of Diffusion and Flow-Matching Models*，2026](https://arxiv.org/abs/2605.10759)提出 Reinforce Adjoint Matching（RAM）。它仍处理黑盒奖励，但不使用 SDE rollout、reward gradient 或沿轨迹的 backward adjoint sweep。
 
@@ -1027,9 +869,9 @@ RAM 从 KL 正则化随机最优控制得到一个结构结论：最优过程改
 4. 用 Bayes bridge score 和 REINFORCE 恒等式，把奖励变成 velocity 的修正回归目标；
 5. 一个终点复用多个独立噪声 $\epsilon$，摊薄采样与奖励成本。
 
-![RAM 论文训练流程](https://arxiv.org/html/2605.10759v2/x1.png)
+![RAM 论文训练流程](images/paper-hires/ram-training.svg)
 
-*图 7-1：RAM 从当前模型采样 clean endpoint，查询一次奖励，再为同一终点解析生成多个独立 noisy state；图源为该论文 Figure 1。*
+*图 6-1：RAM 从当前模型采样 clean endpoint，查询一次奖励，再为同一终点解析生成多个独立 noisy state；图源为该论文 Figure 1。*
 
 对线性 noising kernel，RAM 使用的 backward bridge score 可由当前 velocity 写成
 
@@ -1037,33 +879,30 @@ $$
 \nabla_{x_t}\log p_{0|t}(x_0\mid x_t)
 =\frac{1-t}{t}
 \left(v_t(x_t)-(\epsilon-x_0)\right).
-\tag{7.13}
+\tag{6.9}
 $$
 
 这里的 bridge score 不是额外训练的 score network。在线性插值下，条件 score 可以直接由当前 velocity 与单样本的 Flow Matching target $\epsilon-X_0$ 之差恢复。RAM 再把随机控制中的 score correction 写成 velocity correction：
 
 $$
 \sigma_t u_t
-\mathrel{=}
-2\bigl(v_t^\theta-v_t^{\mathrm{ref}}\bigr),
-\tag{7.14}
+=2\bigl(v_t^\theta-v_t^{\mathrm{ref}}\bigr),
+\tag{6.10}
 $$
 
-其中 $u_t$ 是相对参考过程的控制量，$\sigma_t$ 是相应随机过程的扩散系数，$v_t^{\mathrm{ref}}$ 是预训练模型的参考 velocity。这个关系解释了为什么 RAM 虽由随机最优控制推导，却可以把最终算法重新写成普通的 velocity regression，而不必真的用 SDE rollout。
+其中 $u_t$ 是相对参考过程的控制量，$\sigma_t$ 是相应随机过程的扩散系数，$v_t^{\mathrm{ref}}$ 是预训练模型的参考 velocity。这个关系使 RAM 能够把随机最优控制推导重新写成普通的 velocity regression，而无需实际运行 SDE rollout。
 
-把 REINFORCE 权重、bridge score 与式 (7.14) 合并后，论文给出的主训练目标为
+把 REINFORCE 权重、bridge score 与式 (6.10) 合并后，论文给出的主训练目标为
 
 $$
 \boxed{
 \begin{aligned}
 \mathcal L_{\mathrm{RAM}}(\theta)
-\mathrel{=}
-\mathbb E_t
+=\mathbb E_t
 \Bigl[
 \bigl\|
 v_t^\theta(X_t)
-\mathbin{-}
-\operatorname{sg}\bigl(
+-\operatorname{sg}\bigl(
 &v_t^{\mathrm{ref}}(X_t)\\
 &+R(X_0)
 \bigl((\epsilon-X_0)-v_t^\theta(X_t)\bigr)
@@ -1072,7 +911,7 @@ v_t^\theta(X_t)
 \Bigr].
 \end{aligned}
 }
-\tag{7.15}
+\tag{6.11}
 $$
 
 其中 $X_0\sim p_0^\theta$，$X_t=(1-t)X_0+t\epsilon$，$\epsilon\sim\mathcal N(0,I)$，$\operatorname{sg}$ 表示 stop-gradient。这个目标可以拆成三层含义：
@@ -1081,101 +920,142 @@ $$
 - $(\epsilon-X_0)-v_t^\theta(X_t)$ 是当前模型相对单样本 Flow Matching target 的残差；
 - $R(X_0)$ 决定残差修正的方向和幅度，因此高奖励终点会更强地把 velocity 拉向能够重现该终点的方向。
 
-实现时，模型先完整生成 $X_0$ 并获得一次奖励，再为同一个 $X_0$ 重采样若干 $(t,\epsilon)$ 来估计式 (7.15)。因此 RAM 的计算图不穿过生成 sampler，也不需要奖励可微；ODE、SDE 或高阶求解器都只负责产生训练终点。
+实现时，模型先完整生成 $X_0$ 并获得一次奖励，再为同一个 $X_0$ 重采样若干 $(t,\epsilon)$ 来估计式 (6.11)。因此 RAM 的计算图不穿过生成 sampler，也不需要奖励可微；ODE、SDE 或高阶求解器都只负责产生训练终点。
 
 RAM 主算法为了图像尺度的可扩展性，丢弃了 adjoint 分解中的 path-cost correction；因此它不是完全无近似。论文说明该近似在初始化处成立，并与 KL 最优分布共享固定点结构。论文在 SD3.5-M 的 composability、OCR 和 PickScore 上报告，以最多约 50 倍更少的训练 step 达到 Flow-GRPO 的峰值奖励。
 
-### 7.4 四条训练路线怎样选择
+### 6.3 三条更新路线的对照
+
+下表把 Flow-GRPO 作为基准，与本章两种不依赖真实内部 likelihood 的路线放在一起比较：
 
 | 论文/方法 | 使用的“策略信号” | Rollout | 主要优点 | 核心近似或风险 |
 |---|---|---|---|---|
 | Flow-GRPO | 内部 Gaussian transition ratio | SDE | PPO/GRPO 解释直接 | 有限步 sampler bias、长内部 horizon |
 | Reward-Weighted FM | 奖励权重乘 FM 回归 | ODE 或任意 sampler | 最接近预训练，简单 | 权重退化、模式坍缩、trust region 较弱 |
-| FPO | CFM/ELBO 损失差代理 ratio | 任意 sampler | sampler 无关、外层 horizon 不膨胀 | 代理比与 Monte Carlo 偏差 |
 | RAM | 奖励修正的 adjoint-matching 回归 target | ODE 或任意 sampler | 无 SDE rollout、无 reward gradient，可复用终点 | 主版本忽略 path-cost correction |
 
 ---
 
-## 8. π0.7：RL 经验也可以被蒸馏进条件式 Flow Matching
+## 7. $\pi_{0.7}$：用条件提示吸收 RL 经验，而不是再做在线 RL
 
-[Physical Intelligence，*$\pi_{0.7}$: a Steerable Generalist Robotic Foundation Model with Emergent Capabilities*，2026](https://arxiv.org/abs/2604.15483)需要与前面的在线 RL 算法严格区分：**$\pi_{0.7}$ 本身不是一种 ODE-to-SDE 或 PPO 算法。**
+[Physical Intelligence，*$\pi_{0.7}$: a Steerable Generalist Robotic Foundation Model with Emergent Capabilities*，2026](https://arxiv.org/abs/2604.15483)与前几章的方法处在不同阶段。Flow-GRPO、ReinFlow、奖励加权 Flow Matching 和 RAM 都在直接更新当前策略；$\pi_{0.7}$ 回答的则是：**已经有示范、评估数据和 RL specialist 轨迹后，怎样把这些经验吸收到一个通用 Flow Matching 策略中？**
 
-它的 action expert 仍使用 Flow Matching 预测动作，但训练上下文包含更丰富的 episode metadata，例如：
+因此，把它简单称为“另一种 RL 算法”并不准确。RL 已经在上游 specialist 的训练中发生；$\pi_{0.7}$ 本身主要进行带丰富条件的监督式策略训练，不计算 advantage、策略 ratio 或 ODE 内部转移的 likelihood。
 
-- episode 总速度或长度；
-- 1–5 的整体质量标签；
-- 当前片段是否包含 mistake；
-- subtask instruction、subgoal image 和 control mode。
+### 7.1 条件信息怎样进入 Flow Matching
 
-训练数据不仅包括高质量示范，还包括失败轨迹、低质量轨迹、旧模型评估数据，以及 $\pi_{0.6}^*$ 等 RL specialist 在训练或评估中产生的 autonomous rollout。metadata 告诉模型“这条轨迹质量如何”，避免把所有行为无差别模仿。推理时再提示高质量、无错误和期望速度，从条件分布中选择高质量行为。
+在环境时刻 $h$，令 $A_h$ 表示数据中的动作块，$o_h$ 表示观测历史，$q_h$ 表示任务与策略上下文。$q_h$ 不只包含“做什么”，还包含“以什么方式做”，例如 episode 质量、速度、是否出现错误、子任务指令、子目标图像和控制模式。
 
-从本文视角看，$\pi_{0.7}$ 展示的是奖励信息的另一种去向：
+从噪声 $\varepsilon\sim\mathcal N(0,I)$ 与数据动作 $A_h$ 构造
+
+$$
+A_h^\tau=(1-\tau)\varepsilon+\tau A_h,
+\qquad \tau\sim\mathcal U[0,1].
+$$
+
+只看 action expert，并省略 VLM backbone 的其他训练目标与工程细节，其动作损失仍可写成普通的条件式 Flow Matching：
 
 $$
 \boxed{
-\text{RL specialist rollout}
-\longrightarrow
-\text{带质量标签的数据}
-\longrightarrow
-\text{条件式 Flow Matching 蒸馏}
-\longrightarrow
-\text{可提示的通用策略}.
+\mathcal L_{\pi_{0.7}}
+=\mathbb E
+\left[
+\left\|
+v_\theta(\tau,A_h^\tau,o_h,q_h)
+-(A_h-\varepsilon)
+\right\|^2
+\right].
 }
-\tag{8.1}
+\tag{7.1}
 $$
 
-论文报告，移除 evaluation data 或移除 episode metadata 都会降低 out-of-the-box 表现；完整模型在部分灵巧任务上可匹配甚至超过单任务 RL specialist。这里的关键不是计算 flow likelihood，而是把“成功、失败、速度、错误”等 RL 经验显式编码进条件变量和训练分布。
+关键变化不在速度标签 $A_h-\varepsilon$，而在条件 $q_h$。奖励不会作为一个系数直接乘在式 (7.1) 上；高质量和低质量轨迹仍然都是监督样本，但模型被要求学习不同的条件分布
+
+$$
+p_\theta(A_h\mid o_h,q_h=\text{高质量、无错误})
+\quad\text{与}\quad
+p_\theta(A_h\mid o_h,q_h=\text{低质量或有错误}).
+\tag{7.2}
+$$
+
+这与 reward-weighted regression 的差别很重要：后者通过增大高奖励样本的损失权重改变无条件的数据占比；$\pi_{0.7}$ 则保留异质数据，并用条件变量把不同质量和策略模式分开。
+
+### 7.2 训练条件与推理条件必须配对
+
+整个过程可以写成两阶段：
+
+$$
+\boxed{
+\underbrace{
+\text{示范、失败、evaluation、RL specialist 轨迹}
+\xrightarrow{\text{添加质量与策略条件}}
+\text{条件式 Flow Matching 训练}
+}_{\text{训练：学习多个行为模式}}
+\quad\Longrightarrow\quad
+\underbrace{
+q_h=\text{高质量、无错误、期望速度}
+\xrightarrow{\text{Flow Matching 采样}}
+A_h
+}_{\text{推理：调用目标模式}}.
+}
+\tag{7.3}
+$$
+
+论文在训练中对部分 prompt 组件做 dropout，因此推理时还可以对 metadata 使用 classifier-free guidance，增强“高质量”或“更快”等条件的作用。论文的默认配置会把 overall quality 设为 5、mistake 设为 false，并把 overall speed 设为由该任务 episode length 的第 15 百分位数得到的较快档位。这个步骤不是在部署时重新做 RL，而是用 prompt 选择模型已经学到的条件行为分布。
+
+这也解释了为什么 metadata 不是可有可无的描述文字：如果训练时不给失败轨迹标出“有错误”，推理时的“无错误”条件便没有可识别的对照；如果训练集中从未包含某种高质量行为，仅靠把 quality 提示成 5 也不能凭空创造相应技能。
 
 ---
 
-## 9. 最终逻辑：先决定优化接口，再决定是否从 ODE 到 SDE
+## 8. 全文总结：四种方式与当前挑战
 
-面对一个 Flow Matching 奖励优化问题，可以按以下顺序判断。
+全文的出发点只有一个：预训练 Flow Matching 通常给出确定性 ODE，而 PPO/GRPO 的逐步策略比值要求具有普通概率密度的随机转移。围绕“奖励信息从哪里进入模型”，现有工作形成了四条不同路线。
 
-### 9.1 是否必须使用逐步 likelihood-ratio policy gradient
+### 8.1 四种方式解决的不是同一个问题
 
-如果答案是“是”，就需要把确定性的内部过程变成随机 Markov 策略：
+| 路线 | 奖励或经验怎样进入训练 | 代表方法 | 主要代价 |
+|---|---|---|---|
+| 同边际 ODE-to-SDE | 把内部去噪步变成 Gaussian 策略，计算逐步 likelihood ratio | Flow-GRPO、Flow-SDE | 离散后不再自动同边际，内部 horizon 变长 |
+| 离散随机策略 | 直接给有限步 flow 定义 Gaussian Markov 转移，优化路径联合 likelihood | ReinFlow、Flow-Noise | 随机训练策略与确定性部署策略存在差异 |
+| 奖励驱动的回归 | 用终点奖励加权样本或修正 velocity 回归目标 | Reward-Weighted FM、RAM | 缺少真实策略 ratio，依赖正则或近似控制分布漂移 |
+| 条件式经验吸收 | 把 specialist、示范与评估轨迹写入监督数据，用条件选择行为模式 | $\pi_{0.7}$ | 依赖数据覆盖和条件标签，本身不是在线 RL |
 
-- 希望保留连续时间边际解释：选择 Flow-GRPO/Flow-SDE，并认真设计有限步 sampler；
-- 更重视少步离散策略的精确 likelihood：选择 ReinFlow/Flow-Noise 式直接噪声注入；
-- 机器人还有外层环境时间：明确采用一层联合 likelihood、两层 MDP，还是 hybrid ODE--SDE。
+前两条路线的核心是构造**可计算的随机策略密度**；第三条路线直接改变 Flow Matching 的回归目标；第四条路线则复用已经产生的 RL 经验。它们都能让奖励影响最终策略，但优化对象、概率含义和适用阶段并不相同。
 
-### 9.2 是否可以接受代理目标
+### 8.2 当前仍然存在的挑战
 
-如果不要求精确内部 transition ratio，则可以避开 SDE rollout：
+1. **连续理论与离散实现之间有差距。** 同边际结论描述连续时间精确过程；实际训练常用很少的 Euler 步，时间网格、漂移评估位置和噪声日程都会改变真实转移分布。
+2. **内部 credit assignment 仍然粗糙。** 图像任务常把一个终点奖励分给全部去噪步；机器人任务还叠加了外层环境时间。内部步数越多，路径 ratio 的方差和 critic 的学习难度通常越大。
+3. **不同方法中的“概率”不能互换。** 单步 Gaussian likelihood、内部路径联合 likelihood、最终动作边际概率和奖励回归权重是四种不同信号。用哪种 sampler 采样，就必须按同一种转移规则计算概率。
+4. **探索策略与部署策略可能不一致。** ReinFlow 和 Flow-Noise 会在训练时加入噪声，Flow-GRPO 和 Flow-SDE 也可能在部署时切回确定性 ODE。随机训练得到的改进能否保留，需要单独实验验证。
+5. **奖励提升不等于整体能力提升。** 奖励加权可能导致模式坍缩，在线 RL 可能利用 reward model 漏洞；除了回报，还应同时检查生成质量、多样性、成功率和分布外泛化。
+6. **经验吸收受数据覆盖约束。** 条件提示只能选择模型已经学到的行为模式。质量标签有噪声、目标行为缺失或推理条件与训练条件不一致时，监督式吸收不能凭空补出新技能。
+7. **计算成本仍然限制规模化。** 在线 rollout、环境交互、奖励查询、内部 latent 存储和多轮策略更新都很昂贵；少步采样、终点复用和混合 ODE--SDE 虽能降本，但也会引入新的偏差。
 
-- 奖励天然适合样本重加权：Reward-Weighted Flow Matching；
-- 希望保留 PPO clip，但接受 ELBO 代理：FPO；
-- 希望保持预训练式回归并使用黑盒奖励：RAM；
-- 只需要吸收已有 RL 经验：像 $\pi_{0.7}$ 一样做带质量条件的蒸馏。
+### 8.3 最终判断标准
 
-### 9.3 无论选择哪条路线，都必须单独验证的四件事
+选择方法时依次回答三个问题：
 
-1. **分布忠实性**：随机训练 sampler 与部署 ODE 的终点差异有多大；
-2. **探索质量**：噪声是否产生有意义的新行为，而不是分布外破坏；
-3. **目标忠实性**：真实 likelihood、ELBO 代理或奖励权重究竟优化了什么；
-4. **奖励泛化**：reward 上升是否伴随质量、多样性、安全性或 OOD 性能下降。
+1. 是否必须使用真实的内部 likelihood ratio？
+2. 奖励是在训练时在线获得，还是已经沉淀为 specialist 轨迹？
+3. 训练使用的随机 sampler 与最终部署的确定性 sampler 是否一致？
 
-最终可以把全文压缩成一句话：
+如果需要真实内部 ratio，就选择同边际 SDE 或离散 Gaussian Markov 策略；如果只需要利用终点奖励，可以直接修改 Flow Matching 回归；如果奖励已经体现在数据中，则使用带条件的监督式经验吸收。
 
-> **ODE-to-SDE 不是 Flow Matching 使用奖励学习的普遍前提；它是把确定性生成路径改写成“可探索、可计算逐步 likelihood”的 PPO/GRPO 策略接口。**
+> **总结：**ODE-to-SDE 不是 Flow Matching 强化学习的统一答案，它只解决“如何获得内部随机策略密度”这一类问题。真正统一四条路线的，是奖励最终如何改变动作或样本的终点分布。
 
 ---
 
 ## 参考文献
 
-1. Yaron Lipman et al. [Flow Matching for Generative Modeling](https://arxiv.org/abs/2210.02747). ICLR 2023.
-2. Xingchao Liu, Chengyue Gong, Qiang Liu. [Flow Straight and Fast: Learning to Generate and Transfer Data with Rectified Flow](https://arxiv.org/abs/2209.03003). 2022.
-3. Yang Song et al. [Score-Based Generative Modeling through Stochastic Differential Equations](https://arxiv.org/abs/2011.13456). ICLR 2021.
-4. Jie Liu et al. [Flow-GRPO: Training Flow Matching Models via Online RL](https://arxiv.org/abs/2505.05470). 2025.
-5. Tonghe Zhang et al. [ReinFlow: Fine-tuning Flow Matching Policy with Online Reinforcement Learning](https://arxiv.org/abs/2505.22094). 2025.
-6. Kang Chen et al. [$\pi_{\mathrm{RL}}$: Online RL Fine-tuning for Flow-based Vision-Language-Action Models](https://arxiv.org/abs/2510.25889). 2025.
-7. Feng Wang, Zihao Yu. [Coefficients-Preserving Sampling for Reinforcement Learning with Flow Matching](https://arxiv.org/abs/2509.05952). 2025.
-8. Jade Zou et al. [PRECISE: SDE-Consistent Stochastic Sampling for RL Post-Training of Flow-Matching Models](https://arxiv.org/abs/2605.23522). 2026.
-9. Peter Holderrieth et al. [GLASS Flows: Transition Sampling for Alignment of Flow and Diffusion Models](https://arxiv.org/abs/2509.25170). ICLR 2026.
-10. Jiajun Fan et al. [Online Reward-Weighted Fine-Tuning of Flow Matching with Wasserstein Regularization](https://arxiv.org/abs/2502.06061). ICLR 2025.
-11. Samuel Pfrommer, Yixiao Huang, Somayeh Sojoudi. [Reinforcement Learning for Flow-Matching Policies](https://arxiv.org/abs/2507.15073). 2025.
-12. David McAllister et al. [Flow Matching Policy Gradients](https://arxiv.org/abs/2507.21053). 2025.
-13. Andreas Bergmeister et al. [Reinforce Adjoint Matching: Scaling RL Post-Training of Diffusion and Flow-Matching Models](https://arxiv.org/abs/2605.10759). 2026.
-14. Physical Intelligence et al. [$\pi_{0.7}$: a Steerable Generalist Robotic Foundation Model with Emergent Capabilities](https://arxiv.org/abs/2604.15483). 2026.
-
+1. Michael S. Albergo, Nicholas M. Boffi, Eric Vanden-Eijnden. [Stochastic Interpolants: A Unifying Framework for Flows and Diffusions](https://arxiv.org/abs/2303.08797). 2023/2025.
+2. Yaron Lipman et al. [Flow Matching for Generative Modeling](https://arxiv.org/abs/2210.02747). ICLR 2023.
+3. Xingchao Liu, Chengyue Gong, Qiang Liu. [Flow Straight and Fast: Learning to Generate and Transfer Data with Rectified Flow](https://arxiv.org/abs/2209.03003). 2022.
+4. Yang Song et al. [Score-Based Generative Modeling through Stochastic Differential Equations](https://arxiv.org/abs/2011.13456). ICLR 2021.
+5. Jie Liu et al. [Flow-GRPO: Training Flow Matching Models via Online RL](https://arxiv.org/abs/2505.05470). 2025.
+6. Tonghe Zhang et al. [ReinFlow: Fine-tuning Flow Matching Policy with Online Reinforcement Learning](https://arxiv.org/abs/2505.22094). 2025.
+7. Kang Chen et al. [$\pi_{\mathrm{RL}}$: Online RL Fine-tuning for Flow-based Vision-Language-Action Models](https://arxiv.org/abs/2510.25889). 2025.
+8. Jiajun Fan et al. [Online Reward-Weighted Fine-Tuning of Flow Matching with Wasserstein Regularization](https://arxiv.org/abs/2502.06061). ICLR 2025.
+9. Samuel Pfrommer, Yixiao Huang, Somayeh Sojoudi. [Reinforcement Learning for Flow-Matching Policies](https://arxiv.org/abs/2507.15073). 2025.
+10. Andreas Bergmeister et al. [Reinforce Adjoint Matching: Scaling RL Post-Training of Diffusion and Flow-Matching Models](https://arxiv.org/abs/2605.10759). 2026.
+11. Physical Intelligence et al. [$\pi_{0.7}$: a Steerable Generalist Robotic Foundation Model with Emergent Capabilities](https://arxiv.org/abs/2604.15483). 2026.
